@@ -1,0 +1,8 @@
+{
+  "name": "Remix Piyaa-CA-Final-Companion 2.0",
+  "description": "Imported from GitHub: kuldeepkaushik812-lab/Piyaa--CA-Final-Companion",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

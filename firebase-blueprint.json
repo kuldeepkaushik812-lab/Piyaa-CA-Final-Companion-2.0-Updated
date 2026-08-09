@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "UserProgress": {
+      "title": "User Progress",
+      "description": "Stores user's study progress and timetable.",
+      "type": "object",
+      "properties": {
+        "subjects": {
+          "type": "array",
+          "description": "User's subjects and topics progress."
+        },
+        "timetable": {
+          "type": "array",
+          "description": "User's timetable slots."
+        },
+        "hours": {
+          "type": "number",
+          "description": "Study hours logged today."
+        },
+        "targetHours": {
+          "type": "number",
+          "description": "Target study hours."
+        },
+        "lastUpdated": {
+          "type": "string",
+          "description": "ISO timestamp of last update."
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProgress"
+      },
+      "description": "User progress storage."
+    }
+  }
+}
