@@ -34,7 +34,8 @@ import {
   ExternalLink,
   Tv,
   Maximize2,
-  X
+  X,
+  Info
 } from 'lucide-react';
 import { CASubject, TimetableSlot } from '../types';
 import { useStore } from '../store';
@@ -102,9 +103,26 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
               endTime: parsed.endTime,
               isRunning: true,
               selectedSubjectId: parsed.selectedSubjectId || '',
-              selectedTopicId: parsed.selectedTopicId || ''
+              selectedTopicId: parsed.selectedTopicId || '',
+              pauseStartTime: null,
+              sessionStartTime: parsed.sessionStartTime || null,
+              accumulatedPauseMs: parsed.accumulatedPauseMs || 0
             };
           }
+        } else if (!parsed.isRunning && parsed.timeLeft) {
+            return {
+              workMinutes: parsed.workMinutes || 25,
+              breakMinutes: parsed.breakMinutes || 5,
+              mode: parsed.mode || 'work',
+              timeLeft: parsed.timeLeft,
+              endTime: null,
+              isRunning: false,
+              selectedSubjectId: parsed.selectedSubjectId || '',
+              selectedTopicId: parsed.selectedTopicId || '',
+              pauseStartTime: parsed.pauseStartTime || null,
+              sessionStartTime: parsed.sessionStartTime || null,
+              accumulatedPauseMs: parsed.accumulatedPauseMs || 0
+            };
         }
       }
     } catch (e) {}
@@ -172,12 +190,31 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
   const [timeLeft, setTimeLeft] = useState<number>(initialState?.timeLeft || 25 * 60);
   const [isRunning, setIsRunning] = useState<boolean>(initialState?.isRunning || false);
   const [endTime, setEndTime] = useState<number | null>(initialState?.endTime || null);
-  
+  const [pauseStartTime, setPauseStartTime] = useState<number | null>(initialState?.pauseStartTime || null);
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(initialState?.sessionStartTime || null);
+  const [accumulatedPauseMs, setAccumulatedPauseMs] = useState<number>(initialState?.accumulatedPauseMs || 0);
+
+  const [sessionSummary, setSessionSummary] = useState<{
+    totalElapsedMs: number;
+    effectiveMs: number;
+    subjectName: string;
+    topicName: string;
+  } | null>(null);
+
   const [showStrictModal, setShowStrictModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showForestModal, setShowForestModal] = useState(false);
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
   const [showPipFallbackToast, setShowPipFallbackToast] = useState(false);
+
+  // Format MS for summary
+  const formatMs = (ms: number) => {
+    const totalMins = Math.round(ms / (1000 * 60));
+    const h = Math.floor(totalMins / 60);
+    const m = totalMins % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
 
   // Automatically close PiP window on unmount
   useEffect(() => {
@@ -243,7 +280,7 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
 
 
 
-  // Persist active timer session when running
+  // Persist active timer session when running or paused
   useEffect(() => {
     if (isRunning && endTime) {
       localStorage.setItem('ca_companion_active_timer_session', JSON.stringify({
@@ -253,12 +290,28 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
         workMinutes,
         breakMinutes,
         selectedSubjectId,
-        selectedTopicId
+        selectedTopicId,
+        sessionStartTime,
+        accumulatedPauseMs
+      }));
+    } else if (!isRunning && timeLeft > 0 && timeLeft !== workMinutes * 60 && timeLeft !== breakMinutes * 60) {
+      // Save paused state
+      localStorage.setItem('ca_companion_active_timer_session', JSON.stringify({
+        isRunning: false,
+        timeLeft,
+        mode,
+        workMinutes,
+        breakMinutes,
+        selectedSubjectId,
+        selectedTopicId,
+        pauseStartTime,
+        sessionStartTime,
+        accumulatedPauseMs
       }));
     } else {
       localStorage.removeItem('ca_companion_active_timer_session');
     }
-  }, [isRunning, endTime, mode, workMinutes, breakMinutes, selectedSubjectId, selectedTopicId]);
+  }, [isRunning, endTime, mode, workMinutes, breakMinutes, selectedSubjectId, selectedTopicId, timeLeft, pauseStartTime, sessionStartTime, accumulatedPauseMs]);
 
   useEffect(() => {
     const handleVisibilityChange = async () => {
@@ -367,6 +420,27 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
   const subjectStreak = getSubjectStreak(selectedSubject.id);
   const subjectHoursToday = getSubjectHoursToday(selectedSubject.id);
 
+  const [liveNow, setLiveNow] = useState<number>(Date.now());
+  useEffect(() => {
+    let ticker: any = null;
+    if (sessionStartTime) {
+      ticker = setInterval(() => setLiveNow(Date.now()), 1000);
+    }
+    return () => clearInterval(ticker);
+  }, [sessionStartTime]);
+
+  const { currentSessionElapsedMs, currentSessionPausedMs, currentSessionActiveMs } = useMemo(() => {
+    if (!sessionStartTime) return { currentSessionElapsedMs: 0, currentSessionPausedMs: 0, currentSessionActiveMs: 0 };
+    const elapsed = liveNow - sessionStartTime;
+    let paused = accumulatedPauseMs;
+    if (pauseStartTime) {
+      paused += (liveNow - pauseStartTime);
+    }
+    let active = elapsed - paused;
+    if (active < 0) active = 0;
+    return { currentSessionElapsedMs: elapsed, currentSessionPausedMs: paused, currentSessionActiveMs: active };
+  }, [sessionStartTime, accumulatedPauseMs, pauseStartTime, liveNow]);
+
   // Timer Countdown Logic
   useEffect(() => {
     let timer: any = null;
@@ -423,6 +497,7 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
         setIsRunning(false);
         setEndTime(null);
         setShowIdleOverlay(true);
+        setPauseStartTime(lastActivityRef.current);
       }
     }, 10000);
 
@@ -452,6 +527,7 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
   const handleSessionEnd = () => {
     setIsRunning(false);
     setEndTime(null);
+    setPauseStartTime(null);
     
     // Play soothing completion bell
     try {
@@ -477,6 +553,23 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
       } else if (selectedTopicId.startsWith('slot-')) {
         topicIdToPass = selectedTopicId;
       }
+      
+      // Show summary before clearing session start time
+      if (sessionStartTime) {
+        const totalElapsedMs = Date.now() - sessionStartTime;
+        let finalEffectiveMs = totalElapsedMs - accumulatedPauseMs;
+        if (finalEffectiveMs < 0) finalEffectiveMs = 0;
+        
+        setSessionSummary({
+           totalElapsedMs,
+           effectiveMs: finalEffectiveMs,
+           subjectName: selectedSubject?.name || 'General Subject',
+           topicName: activeTopicObj?.title || 'Deep Study Session'
+        });
+      }
+      
+      setSessionStartTime(null);
+      setAccumulatedPauseMs(0);
 
       onSessionComplete(workMinutes, selectedSubjectId, topicIdToPass || undefined);
 
@@ -513,9 +606,45 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
     if (isRunning) {
       setIsRunning(false);
       setEndTime(null);
+      setPauseStartTime(Date.now());
     } else {
-      setIsRunning(true);
-      setEndTime(Date.now() + timeLeft * 1000);
+      let currentAccumulatedPause = accumulatedPauseMs;
+      
+      // If we are resuming from a pause, accumulate the pause time
+      if (pauseStartTime) {
+        currentAccumulatedPause += (Date.now() - pauseStartTime);
+        setAccumulatedPauseMs(currentAccumulatedPause);
+      }
+      
+      if (!sessionStartTime && mode === 'work') {
+        setSessionStartTime(Date.now());
+      }
+
+      // Only shrink time if we are resuming a work session linked to a timetable slot
+      const isSlotLinked = selectedTopicId && selectedTopicId.startsWith('slot-');
+      
+      if (pauseStartTime && mode === 'work' && isSlotLinked) {
+        const pausedMs = Date.now() - pauseStartTime;
+        const pausedS = Math.floor(pausedMs / 1000);
+        
+        // Cap the reduction to whatever timeLeft currently is
+        const reductionS = Math.min(pausedS, timeLeft);
+        const reductionMins = Math.floor(reductionS / 60);
+        
+        const newTimeLeft = timeLeft - reductionS;
+        const newWorkMinutes = Math.max(0, workMinutes - reductionMins);
+        
+        setWorkMinutes(newWorkMinutes);
+        setTimeLeft(newTimeLeft);
+        
+        setIsRunning(true);
+        setEndTime(Date.now() + newTimeLeft * 1000);
+        setPauseStartTime(null);
+      } else {
+        setIsRunning(true);
+        setEndTime(Date.now() + timeLeft * 1000);
+        setPauseStartTime(null);
+      }
     }
   };
 
@@ -529,10 +658,27 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
         } else if (selectedTopicId.startsWith('slot-')) {
           topicIdToPass = selectedTopicId;
         }
+
+        if (sessionStartTime) {
+          const totalElapsedMs = Date.now() - sessionStartTime;
+          let finalEffectiveMs = totalElapsedMs - accumulatedPauseMs;
+          if (finalEffectiveMs < 0) finalEffectiveMs = 0;
+          
+          setSessionSummary({
+             totalElapsedMs,
+             effectiveMs: finalEffectiveMs,
+             subjectName: selectedSubject?.name || 'General Subject',
+             topicName: activeTopicObj?.title || 'Deep Study Session'
+          });
+        }
+
         onSessionComplete(elapsedMins, selectedSubjectId, topicIdToPass || undefined);
         showToast(`Logged ${elapsedMins} mins early.`);
       }
     }
+    
+    setSessionStartTime(null);
+    setAccumulatedPauseMs(0);
     forceReset();
   };
 
@@ -547,6 +693,9 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
   const forceReset = () => {
     setIsRunning(false);
     setEndTime(null);
+    setPauseStartTime(null);
+    setSessionStartTime(null);
+    setAccumulatedPauseMs(0);
     setTimeLeft(mode === 'work' ? workMinutes * 60 : breakMinutes * 60);
     setShowStrictModal(false);
   };
@@ -1273,6 +1422,32 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
                 <div className={`text-xs font-mono font-bold mt-2 tracking-wider uppercase ${themeStyles.primaryText}`}>
                   {mode === 'work' ? `Focusing on ${selectedSubject.code}` : 'Rest & Recharge Mind'}
                 </div>
+                
+                {/* Active vs Paused Segment Breakdown */}
+                {sessionStartTime && (
+                  <div className="mt-4 px-4 pb-2">
+                    <div className="flex justify-between text-[10px] text-slate-400 font-mono mb-1.5 uppercase tracking-wider font-bold">
+                      <span className="flex items-center gap-1.5 text-emerald-400">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Active: {formatMs(currentSessionActiveMs)}
+                      </span>
+                      <span className="flex items-center gap-1.5 text-amber-500">
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        Paused: {formatMs(currentSessionPausedMs)}
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-900 rounded-full h-2 flex overflow-hidden border border-white/5">
+                      <div 
+                        className="bg-emerald-500 h-full transition-all duration-300" 
+                        style={{ width: `${(currentSessionActiveMs / (currentSessionElapsedMs || 1)) * 100}%` }}
+                      />
+                      <div 
+                        className="bg-amber-500 h-full transition-all duration-300" 
+                        style={{ width: `${(currentSessionPausedMs / (currentSessionElapsedMs || 1)) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Control Buttons */}
@@ -1550,6 +1725,48 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
 
         </div>
       </div>
+
+      {/* Session Summary Modal */}
+      {sessionSummary && (
+        <div className="fixed inset-0 z-[10000] w-screen h-screen flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in zoom-in-95">
+          <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl relative">
+            <div className="flex items-center gap-3 text-emerald-400 mb-2">
+              <CheckCircle2 className="w-6 h-6" />
+              <h3 className="text-xl font-semibold">Session Complete</h3>
+            </div>
+            
+            <div className="mb-6 space-y-1">
+              <p className="text-slate-200 font-medium text-lg">{sessionSummary.subjectName}</p>
+              <p className="text-slate-400 text-sm">{sessionSummary.topicName}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
+                <p className="text-slate-400 text-xs mb-1 uppercase tracking-wider font-semibold">Effective Time</p>
+                <p className="text-2xl font-bold text-emerald-400">{formatMs(sessionSummary.effectiveMs)}</p>
+              </div>
+              <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
+                <p className="text-slate-400 text-xs mb-1 uppercase tracking-wider font-semibold">Total Elapsed</p>
+                <p className="text-2xl font-bold text-slate-200">{formatMs(sessionSummary.totalElapsedMs)}</p>
+              </div>
+            </div>
+            
+            <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-3 mb-6 flex items-start gap-2">
+              <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-indigo-300 leading-relaxed">
+                <strong>Productivity Insight:</strong> You paused for <strong className="text-indigo-200">{formatMs(sessionSummary.totalElapsedMs - sessionSummary.effectiveMs)}</strong> during this block.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setSessionSummary(null)}
+              className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium transition-colors cursor-pointer"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* FOCUS FOREST GARDEN MODAL */}
       {showForestModal && (

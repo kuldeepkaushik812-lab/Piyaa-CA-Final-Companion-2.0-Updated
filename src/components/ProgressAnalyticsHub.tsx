@@ -11,10 +11,12 @@ import {
   CheckCircle2, Target, Activity, Filter, Layers, Clock, ArrowUpRight, 
   BarChart3, Sliders, Download, HelpCircle, RefreshCw, BookOpen, Flame, 
   ShieldAlert, PieChart as PieIcon, Gauge, Brain, Check, ChevronRight, Search, 
-  Eye, FileSpreadsheet, Hourglass
+  Eye, FileSpreadsheet, Hourglass, X
 } from 'lucide-react';
 import { useStore } from '../store';
 import { getISTYMD, addDaysToYMD } from '../lib/dateUtils';
+import html2canvas from 'html2canvas';
+import { WeeklyHeatmap } from './WeeklyHeatmap';
 
 interface ProgressAnalyticsHubProps {
   subjects: CASubject[];
@@ -33,6 +35,9 @@ export const ProgressAnalyticsHub: React.FC<ProgressAnalyticsHubProps> = ({
 
   // Active Sub-Tab
   const [activeTab, setActiveTab] = useState<'overview' | 'matrix' | 'forecast' | 'velocity'>('overview');
+  
+  // Export Modal State
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
 
   // Active Group Filter
   const [groupFilter, setGroupFilter] = useState<'all' | 'group1' | 'group2'>('all');
@@ -382,6 +387,26 @@ export const ProgressAnalyticsHub: React.FC<ProgressAnalyticsHubProps> = ({
     }, 600);
   };
 
+  const exportAsImage = async () => {
+    const element = document.getElementById('daily-summary-card');
+    if (!element) return;
+    try {
+      const canvas = await html2canvas(element, { backgroundColor: '#0f172a', scale: 2 });
+      const image = canvas.toDataURL('image/png', 1.0);
+      const link = document.createElement('a');
+      link.download = `ca-study-summary-${getISTYMD()}.png`;
+      link.href = image;
+      link.click();
+    } catch (error) {
+      console.error('Error exporting image:', error);
+    }
+  };
+
+  const todayYMD = getISTYMD();
+  const todayLogs = studyLogs.filter(log => log.date === todayYMD);
+  const todayHours = todayLogs.reduce((acc, log) => acc + log.hours, 0).toFixed(1);
+  const todayCompletedSlots = timetable.filter(slot => slot.completed).length;
+
   return (
     <div className="w-full max-w-7xl mx-auto space-y-6 pb-16 animate-in fade-in duration-500">
       
@@ -641,8 +666,15 @@ export const ProgressAnalyticsHub: React.FC<ProgressAnalyticsHubProps> = ({
           </button>
         </div>
 
-        <div className="text-xs font-mono text-slate-400 hidden lg:block">
-          CA Final Exam Target: <strong className="text-amber-300">Nov 2026</strong>
+        <div className="text-xs font-mono text-slate-400 hidden lg:flex items-center gap-4">
+          <span>CA Final Exam Target: <strong className="text-amber-300">Nov 2026</strong></span>
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="flex items-center gap-2 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span className="font-bold">Export Summary</span>
+          </button>
         </div>
       </div>
 
@@ -1213,6 +1245,95 @@ export const ProgressAnalyticsHub: React.FC<ProgressAnalyticsHubProps> = ({
             </div>
           </div>
 
+          {/* D3 Weekly Consistency Heatmap */}
+          <div className="lg:col-span-2 bg-slate-900/90 p-5 rounded-3xl border border-white/10 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h3 className="text-sm font-mono font-bold text-teal-300 uppercase flex items-center gap-2">
+                <Flame className="w-4 h-4 text-teal-400" /> Weekly Consistency Heatmap
+              </h3>
+              <span className="text-[10px] text-slate-400 font-mono">Last 12 Weeks Intensity</span>
+            </div>
+            
+            <div className="w-full flex justify-center py-4">
+              <WeeklyHeatmap studyLogs={studyLogs} />
+            </div>
+            
+            <div className="flex items-center justify-end gap-3 text-[10px] font-mono text-slate-400 border-t border-white/5 pt-3">
+              <span>Less</span>
+              <div className="flex gap-1">
+                <div className="w-3 h-3 rounded-sm bg-slate-800"></div>
+                <div className="w-3 h-3 rounded-sm bg-emerald-900"></div>
+                <div className="w-3 h-3 rounded-sm bg-emerald-700"></div>
+                <div className="w-3 h-3 rounded-sm bg-emerald-500"></div>
+                <div className="w-3 h-3 rounded-sm bg-emerald-400"></div>
+                <div className="w-3 h-3 rounded-sm bg-emerald-300"></div>
+              </div>
+              <span>More</span>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* Export Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-700 p-6 rounded-3xl w-full max-w-md relative flex flex-col gap-6">
+            <button 
+              onClick={() => setShowExportModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* The exportable card */}
+            <div id="daily-summary-card" className="p-8 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 shadow-2xl relative overflow-hidden flex flex-col items-center text-center">
+              <div className="absolute -top-10 -right-10 w-32 h-32 bg-teal-500/20 rounded-full blur-3xl"></div>
+              <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-indigo-500/20 rounded-full blur-3xl"></div>
+
+              <div className="flex items-center gap-2 text-teal-400 mb-6 z-10">
+                <Sparkles className="w-6 h-6" />
+                <h2 className="text-xl font-black tracking-widest uppercase">Daily Progress</h2>
+              </div>
+
+              <div className="z-10 bg-slate-800/50 px-4 py-1.5 rounded-full border border-white/5 text-xs text-slate-300 font-mono mb-8">
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 w-full z-10">
+                <div className="bg-slate-800/80 border border-white/5 p-4 rounded-2xl flex flex-col items-center">
+                  <Clock className="w-5 h-5 text-indigo-400 mb-2" />
+                  <span className="text-3xl font-black text-white">{todayHours}</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Hours Focused</span>
+                </div>
+                <div className="bg-slate-800/80 border border-white/5 p-4 rounded-2xl flex flex-col items-center">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 mb-2" />
+                  <span className="text-3xl font-black text-white">{todayCompletedSlots}</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Tasks Done</span>
+                </div>
+              </div>
+
+              <div className="mt-8 z-10 w-full bg-slate-800/40 p-4 rounded-xl border border-white/5 flex items-center justify-between">
+                <div className="text-left">
+                  <span className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold">Overall Syllabus</span>
+                  <span className="block text-lg font-black text-teal-300">{overallPercentage}% Completed</span>
+                </div>
+                <Target className="w-8 h-8 text-teal-500/50" />
+              </div>
+
+              <div className="mt-6 z-10 text-[9px] text-slate-500 uppercase tracking-widest font-bold">
+                CA Final Study Companion
+              </div>
+            </div>
+
+            <button
+              onClick={exportAsImage}
+              className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <Download className="w-5 h-5" />
+              Download to Share
+            </button>
+          </div>
         </div>
       )}
 

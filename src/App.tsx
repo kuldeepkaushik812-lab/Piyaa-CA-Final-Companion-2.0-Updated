@@ -32,6 +32,7 @@ import { ProfileModal } from "./components/ProfileModal";
 import { HelpDocumentationModal } from "./components/HelpDocumentationModal";
 import { PreDeployCheckModal } from "./components/PreDeployCheckModal";
 import { FloatingActionDock } from "./components/FloatingActionDock";
+import { MemoryMonitor } from "./components/MemoryMonitor";
 
 export default function App() {
   const { isStandalone } = usePWAInstall();
@@ -1064,6 +1065,9 @@ export default function App() {
 
       {/* Glassmorphic Floating Quick Action Dock & Ambient Soundscape Control */}
       <FloatingActionDock />
+
+      {/* Memory Usage & Crash Prevention Monitor */}
+      <MemoryMonitor />
 
     </div>
   );
