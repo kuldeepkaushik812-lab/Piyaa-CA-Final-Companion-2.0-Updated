@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { CASubject, TimetableSlot, StudyHistoryLog, SlotStatus, BacklogDebtItem, TimetablePreset, ChatMessage } from './types';
+import { CASubject, TimetableSlot, StudyHistoryLog, SlotStatus, BacklogDebtItem, TimetablePreset, ChatMessage, FocusSession } from './types';
 import { DEFAULT_CA_SUBJECTS, INITIAL_TIMETABLE } from './data/caData';
 import { getISTYMD, addDaysToYMD } from './lib/dateUtils';
 import { parseSlotHours, parseTimeStr, formatMinutesToTimeStr, sanitizeAndMergeConsecutiveBreaks } from './utils/timeUtils';
@@ -41,6 +41,9 @@ interface GlobalState {
   getSubjectHoursToday: (subjectId: string) => number;
   getTotalHoursToday: () => number;
   getTotalHoursForDate: (dateStr: string) => number;
+  
+  focusSessions: FocusSession[];
+  addFocusSession: (session: Omit<FocusSession, 'id' | 'timestamp'>) => void;
   
   targetStudyHours: number;
   setTargetStudyHours: (hours: number | ((prev: number) => number)) => void;
@@ -265,6 +268,13 @@ export const useStore = create<GlobalState>()(
             ...(dateStr === today ? { targetStudyHours: target } : {})
           };
         });
+      },
+
+      focusSessions: [],
+      addFocusSession: (session) => {
+        set((state) => ({
+          focusSessions: [{ ...session, id: Date.now().toString(), timestamp: Date.now() }, ...(state.focusSessions || [])]
+        }));
       },
 
       studyLogs: [],
@@ -970,6 +980,7 @@ export const useStore = create<GlobalState>()(
           dailyShiftMinutes: data.dailyShiftMinutes && typeof data.dailyShiftMinutes === 'object' ? data.dailyShiftMinutes : state.dailyShiftMinutes || {},
           isIdleGuardEnabled: typeof data.isIdleGuardEnabled === 'boolean' ? data.isIdleGuardEnabled : state.isIdleGuardEnabled ?? false,
           studyLogs: Array.isArray(data.studyLogs) ? data.studyLogs : state.studyLogs,
+          focusSessions: Array.isArray(data.focusSessions) ? data.focusSessions : state.focusSessions || [],
           targetStudyHours: typeof data.targetStudyHours === 'number' ? data.targetStudyHours : state.targetStudyHours,
           subjectStreaks: data.subjectStreaks && typeof data.subjectStreaks === 'object' ? data.subjectStreaks : state.subjectStreaks,
           selectedDateStr: typeof data.selectedDateStr === 'string' ? data.selectedDateStr : state.selectedDateStr || getISTYMD(),

@@ -41,6 +41,7 @@ import { CASubject, TimetableSlot } from '../types';
 import { useStore } from '../store';
 import { getISTYMD, getISTDate, getISTTimeString } from '../lib/dateUtils';
 import { parseSlotHours, parseTimeStr, parseTimeToMinutes } from '../utils/timeUtils';
+import { FocusEfficiencyChart } from './FocusEfficiencyChart';
 
 interface ForestTreeRecord {
   id: string;
@@ -255,6 +256,7 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
                 console.log('Wake Lock was released');
               }
             });
+        
           } else {
             if (wakeLockRef.current) {
               await wakeLockRef.current.release();
@@ -566,6 +568,14 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
            subjectName: selectedSubject?.name || 'General Subject',
            topicName: activeTopicObj?.title || 'Deep Study Session'
         });
+        
+        store.addFocusSession({
+          dateStr: getISTYMD(),
+          subjectName: selectedSubject?.name || 'General Subject',
+          topicName: activeTopicObj?.title || 'Deep Study Session',
+          effectiveMs: finalEffectiveMs,
+          totalElapsedMs
+        });
       }
       
       setSessionStartTime(null);
@@ -670,6 +680,14 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
              subjectName: selectedSubject?.name || 'General Subject',
              topicName: activeTopicObj?.title || 'Deep Study Session'
           });
+        
+        store.addFocusSession({
+          dateStr: getISTYMD(),
+          subjectName: selectedSubject?.name || 'General Subject',
+          topicName: activeTopicObj?.title || 'Deep Study Session',
+          effectiveMs: finalEffectiveMs,
+          totalElapsedMs
+        });
         }
 
         onSessionComplete(elapsedMins, selectedSubjectId, topicIdToPass || undefined);
@@ -910,6 +928,8 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
         };
     }
   }, [colorTheme]);
+
+  const todaySessions = store.focusSessions?.filter(s => s.dateStr === getISTYMD()) || [];
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500 pb-16">
@@ -1725,6 +1745,8 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
 
         </div>
       </div>
+
+<FocusEfficiencyChart sessions={todaySessions} />
 
       {/* Session Summary Modal */}
       {sessionSummary && (
