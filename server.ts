@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import dotenv from 'dotenv';
@@ -7,6 +8,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
+const httpServer = http.createServer(app);
 const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
@@ -795,7 +797,13 @@ async function startServer() {
   // Vite middleware in dev
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: {
+          server: httpServer,
+          overlay: false
+        }
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -807,7 +815,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 }

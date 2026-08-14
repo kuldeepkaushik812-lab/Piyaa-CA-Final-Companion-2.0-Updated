@@ -139,3 +139,12 @@ export interface TimetablePreset {
   availableHours?: number;
   manualSlots?: TimetableSlot[];
 }
+export interface FocusSession {
+  id: string;
+  timestamp: number;
+  dateStr: string;
+  subjectName: string;
+  topicName: string;
+  effectiveMs: number;
+  totalElapsedMs: number;
+}

@@ -95,7 +95,7 @@ export const OverallSyllabusAuditModal: React.FC<OverallSyllabusAuditModalProps>
       });
 
       const totalCh = abcCategoryFilter === 'ALL' ? (sub.totalChapters || topics.length || 1) : filteredTopics.length;
-      const completedCh = filteredTopics.filter((t) => t.completed).length;
+      const completedCh = filteredTopics.filter((t) => t.rev1).length;
       const percent = totalCh > 0 ? Math.round((completedCh / totalCh) * 100) : 0;
 
       const r1Count = filteredTopics.filter((t) => t.rev1).length;
@@ -161,8 +161,8 @@ export const OverallSyllabusAuditModal: React.FC<OverallSyllabusAuditModalProps>
 
     subjects.forEach((s) => {
       (s.topics || []).forEach((t) => {
-        if (t.completed && t.completedAt) {
-          const cTime = new Date(t.completedAt).getTime();
+        if (t.rev1 && t.rev1At) {
+          const cTime = new Date(t.rev1At).getTime();
           if (cTime >= sevenDaysAgoTime) {
             chaptersCompletedLast7Days += 1;
           }

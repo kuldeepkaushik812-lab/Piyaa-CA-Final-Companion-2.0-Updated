@@ -656,7 +656,7 @@ export const ReadinessDashboardHub: React.FC<ReadinessDashboardHubProps> = ({ su
                 <span className="text-[9px] text-slate-500 block mb-1">{day.formattedDate}</span>
                 
                 <div className={`font-mono font-bold text-xs ${day.isMet ? 'text-emerald-300' : day.hours > 0 ? 'text-cyan-300' : 'text-slate-500'}`}>
-                  {day.hours}h
+                  {Number(day.hours.toFixed(1))}h
                 </div>
 
                 <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden mt-1.5">
@@ -670,7 +670,7 @@ export const ReadinessDashboardHub: React.FC<ReadinessDashboardHubProps> = ({ su
           </div>
 
           <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-white/5">
-            <span>Weekly Total: <strong className="text-white font-mono">{consistencyStats.total7dHours} hrs</strong></span>
+            <span>Weekly Total: <strong className="text-white font-mono">{Number(consistencyStats.total7dHours.toFixed(1))} hrs</strong></span>
             <span>Targets Met: <strong className="text-emerald-400 font-mono">{consistencyStats.daysMetTarget} / 7 days</strong></span>
           </div>
         </div>

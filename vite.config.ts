@@ -60,7 +60,9 @@ export default defineConfig(() => {
       },
     },
     server: {
-      hmr: process.env.DISABLE_HMR !== 'true' ? { overlay: true } : false,
+      hmr: {
+        overlay: false
+      },
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

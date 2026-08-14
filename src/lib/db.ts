@@ -65,8 +65,13 @@ export function cleanUndefined<T>(obj: T): T {
   return cleaned;
 }
 
+export const getActiveAttemptId = () => {
+  return (typeof window !== 'undefined' ? localStorage.getItem('ca_active_attempt') : 'nov-2026') || 'nov-2026';
+};
+
 export const getUserDocRef = (userId: string) => {
-  return doc(db, 'users', userId, 'ca_final_state', 'master_data');
+  const attempt = getActiveAttemptId().replace(/-/g, '_').toLowerCase();
+  return doc(db, 'users', userId, `ca_final_state_${attempt}`, 'master_data');
 };
 
 export const saveProgressToCloud = async (stateData?: any) => {
@@ -85,7 +90,6 @@ export const saveProgressToCloud = async (stateData?: any) => {
 
   const userId = auth.currentUser.uid;
   const docRef = getUserDocRef(userId);
-  const userRootRef = doc(db, 'users', userId);
   
   const payload = stateData || {
     subjects: store.subjects,
@@ -109,8 +113,6 @@ export const saveProgressToCloud = async (stateData?: any) => {
     store.setCloudSyncStatus('saving');
     const cleanedPayload = cleanUndefined(payload);
     await setDoc(docRef, cleanedPayload, { merge: true });
-    // Keep root doc in sync too for backwards compatibility
-    await setDoc(userRootRef, cleanedPayload, { merge: true });
     
     // Save public stats for Study Buddy Accountability Room
     try {
@@ -216,7 +218,6 @@ export const setupRealtimeCloudSync = (userId: string) => {
         isHydratingFromRemote = true;
         const cleanedDefault = cleanUndefined(defaultPayload);
         await setDoc(docRef, cleanedDefault);
-        await setDoc(doc(db, 'users', userId), cleanedDefault);
         useStore.getState().hydrateFromCloud(cleanedDefault);
         const state = useStore.getState();
         prevSerializedData = JSON.stringify({
@@ -261,7 +262,12 @@ export const stopRealtimeCloudSyncAndWipe = () => {
 
   // Clear local storage cache
   try {
-    localStorage.removeItem('ca-final-companion-storage');
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('ca-final-companion-storage')) {
+        localStorage.removeItem(key);
+      }
+    }
     localStorage.removeItem('ca_companion_hours');
     localStorage.removeItem('ca_companion_target_hours');
     localStorage.removeItem('ca_companion_subjects');

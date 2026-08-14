@@ -71,15 +71,21 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const isForceOfflineMode = useStore((state) => state.isForceOfflineMode);
   const setForceOfflineMode = useStore((state) => state.setForceOfflineMode);
-  const subjects = useStore((state) => state.subjects);
+  const selectedGroupFilter = useStore((state) => state.selectedGroupFilter);
+  const setSelectedGroupFilter = useStore((state) => state.setSelectedGroupFilter);
+  const rawSubjects = useStore((state) => state.subjects);
+  const subjects = useMemo(() => {
+    if (selectedGroupFilter === 'BOTH') return rawSubjects;
+    return rawSubjects.filter(sub => sub.group === selectedGroupFilter);
+  }, [rawSubjects, selectedGroupFilter]);
   const selectedDateStr = useStore((state) => state.selectedDateStr) || getISTYMD();
-  const dailyTargets = useStore((state) => state.dailyTargets) || {};
+  const getDailyTarget = useStore((state) => state.getDailyTarget);
   const storeStudyLogs = useStore((state) => state.studyLogs) || [];
   const schedulesByDate = useStore((state) => state.schedulesByDate) || {};
   const storeTimetable = useStore((state) => state.timetable) || [];
   const getTotalHoursForDate = useStore((state) => state.getTotalHoursForDate);
 
-  const todayTargetHours = dailyTargets[selectedDateStr] ?? 12.0;
+  const todayTargetHours = getDailyTarget ? getDailyTarget(selectedDateStr) : 12.0;
 
   const todayCompletedHours = useMemo(() => {
     if (getTotalHoursForDate) {
@@ -104,9 +110,32 @@ export const Header: React.FC<HeaderProps> = ({
   const studyHoursToday = todayCompletedHours;
   const targetStudyHours = todayTargetHours;
 
-  // Exam target calculation (default target exam: Nov 1, 2026)
-  const [examDate, setExamDate] = useState<string>('2026-11-01');
+  // Exam target calculation based on active attempt
+  const [examDate, setExamDate] = useState<string>(() => {
+    const attempt = (typeof window !== 'undefined' ? localStorage.getItem('ca_active_attempt') : 'nov-2026') || 'nov-2026';
+    const [month, year] = attempt.split('-');
+    return `${year}-${month === 'may' ? '05' : '11'}-01`;
+  });
   const [daysLeft, setDaysLeft] = useState<number>(0);
+
+  // Dynamic Attempts Generator
+  const generateAttempts = () => {
+    const currentYear = new Date().getFullYear();
+    const startYear = Math.max(2026, currentYear);
+    const attempts = [];
+    for (let y = startYear; y <= startYear + 4; y++) {
+      if (y === 2026) {
+        attempts.push('nov-2026'); // Start from Nov 26 as requested
+      } else {
+        attempts.push(`may-${y}`);
+        attempts.push(`nov-${y}`);
+      }
+    }
+    return attempts;
+  };
+  const ATTEMPT_OPTIONS = useMemo(() => generateAttempts(), []);
+
+  const [isAttemptDropdownOpen, setIsAttemptDropdownOpen] = useState(false);
 
   // Live Header Pomodoro Widget State
   const [pomodoroState, setPomodoroState] = useState<{
@@ -384,34 +413,35 @@ export const Header: React.FC<HeaderProps> = ({
           Network Offline. You can continue studying! Changes will be queued.
         </div>
       )}
-      <div className="relative max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-1.5 sm:py-2.5">
+      <div className="relative max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-5">
 
         {/* Top Branding & Status Row */}
-        <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-2 sm:gap-4">
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 md:flex-auto">
+        <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-4 sm:gap-6">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1 md:flex-auto">
             <div className="relative group shrink-0">
-              <div className={`w-8 h-8 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr p-0.5 shadow-lg group-hover:scale-105 transition-transform ${isStrictMode ? 'from-red-500 via-red-300 to-white/80 shadow-red-500/30' : 'from-indigo-500 via-sky-400 to-indigo-300 shadow-indigo-500/30'}`}>
+              <div className={`w-10 h-10 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr p-0.5 shadow-lg group-hover:scale-105 transition-transform ${isStrictMode ? 'from-red-500 via-red-300 to-white/80 shadow-red-500/30' : 'from-indigo-500 via-sky-400 to-indigo-300 shadow-indigo-500/30'}`}>
                 <div className={`w-full h-full rounded-[14px] flex items-center justify-center overflow-hidden backdrop-blur-md ${isStrictMode ? 'bg-red-950/80' : 'bg-slate-950/80'}`}>
-                  <span className={`text-lg sm:text-2xl drop-shadow-[0_0_8px_rgba(129,140,248,0.8)] ${isStrictMode ? 'drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]' : ''}`}>🌱🏼</span>
+                  <span className={`text-xl sm:text-3xl drop-shadow-[0_0_8px_rgba(129,140,248,0.8)] ${isStrictMode ? 'drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]' : ''}`}>🌱🏼</span>
                 </div>
               </div>
-              <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 border-2 border-slate-950 rounded-full animate-pulse ${isStrictMode ? 'bg-red-500 shadow-[0_0_10px_#ef4444]' : 'bg-indigo-400 shadow-[0_0_10px_#818cf8]'}`} />
+              <span className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-slate-950 rounded-full animate-pulse ${isStrictMode ? 'bg-red-500 shadow-[0_0_10px_#ef4444]' : 'bg-indigo-400 shadow-[0_0_10px_#818cf8]'}`} />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className={`text-base sm:text-xl md:text-2xl font-black tracking-tight drop-shadow truncate ${isStrictMode ? 'strict-gradient-text' : 'nature-gradient-text'}`}>
+                <h1 className={`text-lg sm:text-2xl md:text-3xl font-black tracking-tight drop-shadow truncate ${isStrictMode ? 'strict-gradient-text' : 'nature-gradient-text'}`}>
                   Piyaa 💕 CA Final Companion
                 </h1>
               </div>
-              <p className="text-[10px] sm:text-xs text-slate-300/90 flex items-center gap-1 mt-0.5 font-medium truncate">
-                <Heart className={`w-3 h-3 ${accentColor} fill-current animate-pulse shrink-0`} />
+              <p className="text-[11px] sm:text-sm text-slate-300/90 flex items-center gap-1.5 mt-0.5 font-medium truncate">
+                <Heart className={`w-3.5 h-3.5 ${accentColor} fill-current animate-pulse shrink-0`} />
                 <span className="truncate">"Aapki Piyaa aapke har step par aapke sath hai, My love! 🍃✨"</span>
               </p>
             </div>
           </div>
 
           {/* Streamlined Compact Metrics Bar (Option 1 Decluttered Capsule) */}
-          <div className="flex items-center justify-center md:justify-end shrink-0 order-3 w-full md:w-auto md:flex-1 md:order-2 mt-2 md:mt-0">
+          <div className="flex items-center justify-center md:justify-end shrink-0 order-3 w-full md:w-auto md:flex-1 md:order-2 mt-3 md:mt-0 flex-wrap gap-3">
+            
             <div className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-2xl glass-card border border-indigo-500/30 shadow-lg bg-slate-900/80 backdrop-blur-md">
               {/* Daily Progress Quick Trigger */}
               <button
@@ -652,7 +682,60 @@ export const Header: React.FC<HeaderProps> = ({
 
                   {/* Settings & Controls Group */}
                   <div className="p-2.5 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-2">
+                    
+                    {/* Target Configuration Section */}
                     <div>
+                      <p className="text-[10px] uppercase tracking-wider text-amber-500 font-black mb-1.5 px-1 flex items-center gap-1.5">
+                        <Target className="w-3 h-3" /> Target Configuration
+                      </p>
+                      <div className="space-y-1.5">
+                        <div className="relative">
+                          <button 
+                            onClick={() => setIsAttemptDropdownOpen(!isAttemptDropdownOpen)}
+                            className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-amber-950/20 hover:bg-amber-900/40 border border-amber-500/30 hover:border-amber-500/60 text-xs font-bold text-amber-300 cursor-pointer transition-all"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span>Attempt: {((typeof window !== 'undefined' ? localStorage.getItem('ca_active_attempt') : 'nov-2026') || 'nov-2026').replace('-', ' ').toUpperCase()}</span>
+                            </span>
+                            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isAttemptDropdownOpen ? 'rotate-180' : ''}`} />
+                          </button>
+                          
+                          {isAttemptDropdownOpen && (
+                            <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-slate-800 border border-amber-500/40 shadow-2xl rounded-xl z-[100] flex flex-col py-1.5 custom-scrollbar">
+                              {ATTEMPT_OPTIONS.map(attempt => {
+                                const currentAttempt = (typeof window !== 'undefined' ? localStorage.getItem('ca_active_attempt') : 'nov-2026') || 'nov-2026';
+                                return (
+                                  <button
+                                    key={attempt}
+                                    onClick={() => {
+                                      localStorage.setItem('ca_active_attempt', attempt);
+                                      window.location.reload();
+                                    }}
+                                    className={`px-3 py-2 text-left text-[11px] font-bold transition-all ${currentAttempt === attempt ? 'bg-amber-500/20 text-amber-300 border-l-[3px] border-amber-500' : 'text-slate-300 hover:bg-slate-700 hover:text-white border-l-[3px] border-transparent'}`}
+                                  >
+                                    {attempt.replace('-', ' ').toUpperCase()}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="w-full flex items-center bg-indigo-950/20 border border-indigo-500/30 rounded-xl overflow-hidden p-0.5">
+                          {(['BOTH', 1, 2] as const).map(g => (
+                            <button
+                              key={g}
+                              onClick={() => setSelectedGroupFilter(g)}
+                              className={`flex-1 py-1.5 text-[10px] sm:text-xs font-bold transition-all rounded-lg ${selectedGroupFilter === g ? 'bg-indigo-500 text-white shadow-md' : 'text-indigo-300 hover:bg-indigo-900/50'}`}
+                            >
+                              {g === 'BOTH' ? 'ALL GRPS' : `GROUP ${g}`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800/80">
                       <p className="text-[10px] uppercase tracking-wider text-[#2dd4bf] font-black mb-1.5 px-1">Aspirant Controls</p>
                       <div className="space-y-1.5">
                         <button

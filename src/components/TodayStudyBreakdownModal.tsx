@@ -34,6 +34,8 @@ export const TodayStudyBreakdownModal: React.FC<TodayStudyBreakdownModalProps> =
   const selectedDateStr = useStore((state) => state.selectedDateStr);
   const getScheduleForDate = useStore((state) => state.getScheduleForDate);
   const getDailyTarget = useStore((state) => state.getDailyTarget);
+  const schedulesByDate = useStore((state) => state.schedulesByDate);
+  const timetable = useStore((state) => state.timetable);
   const studyHistoryLogs = useStore((state) => state.studyHistoryLogs);
   const studyLogs = useStore((state) => state.studyLogs);
   const subjects = useStore((state) => state.subjects);
@@ -64,7 +66,7 @@ export const TodayStudyBreakdownModal: React.FC<TodayStudyBreakdownModalProps> =
   // Retrieve today's schedule slots
   const todaySlots = useMemo(() => {
     return getScheduleForDate(dateStr) || [];
-  }, [getScheduleForDate, dateStr]);
+  }, [getScheduleForDate, dateStr, schedulesByDate, timetable]);
 
   // Today's logs from studyHistoryLogs
   const todayHistoryLogs = useMemo(() => {

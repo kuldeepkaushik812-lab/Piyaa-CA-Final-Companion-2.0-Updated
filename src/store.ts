@@ -66,6 +66,9 @@ interface GlobalState {
   activeTab: 'master-summary' | 'subjects-hub' | 'chat' | 'timetable' | 'timer' | 'subjects' | 'analytics' | 'radar' | 'motivation' | 'evaluator' | 'flashcards' | 'calendar-tracker' | 'study-buddy' | 'exam-simulator' | 'study-history';
   setActiveTab: (tab: 'master-summary' | 'subjects-hub' | 'chat' | 'timetable' | 'timer' | 'subjects' | 'analytics' | 'radar' | 'motivation' | 'evaluator' | 'flashcards' | 'calendar-tracker' | 'study-buddy' | 'exam-simulator' | 'study-history') => void;
 
+  selectedGroupFilter: 1 | 2 | 'BOTH';
+  setSelectedGroupFilter: (group: 1 | 2 | 'BOTH') => void;
+
   currentSubject: string;
   setCurrentSubject: (subjectId: string) => void;
   timerTargetSlotId: string | null;
@@ -156,7 +159,8 @@ export const useStore = create<GlobalState>()(
       timetable: INITIAL_TIMETABLE,
       setTimetable: (timetableOrFn) => {
         set((state) => {
-          const nextTimetable = typeof timetableOrFn === 'function' ? timetableOrFn(state.timetable) : timetableOrFn;
+          const rawNext = typeof timetableOrFn === 'function' ? timetableOrFn(state.timetable) : timetableOrFn;
+          const nextTimetable = sanitizeAndMergeConsecutiveBreaks(rawNext || []);
           const today = getISTYMD();
           const shouldSync = state.isTodaySyncedWithWeekly !== false;
           return {
@@ -187,7 +191,7 @@ export const useStore = create<GlobalState>()(
               const newProgress = Math.min(100, (slot.progress || 0) + addedProgress);
               
               let newStatus = slot.status;
-              let isCompleted = slot.completed;
+              let isCompleted = slot.rev1;
               if (currentStudied >= totalSlotHours) {
                 newStatus = 'COMPLETED';
                 isCompleted = true;
@@ -255,10 +259,44 @@ export const useStore = create<GlobalState>()(
       dailyTargets: {},
       getDailyTarget: (dateStr) => {
         const state = get();
-        if (state.dailyTargets && typeof state.dailyTargets[dateStr] === 'number') {
-          return state.dailyTargets[dateStr];
+        const slots = state.schedulesByDate && state.schedulesByDate[dateStr] 
+          ? state.schedulesByDate[dateStr] 
+          : (dateStr === getISTYMD() ? state.timetable : []);
+          
+        let planned = 0;
+        if (Array.isArray(slots) && slots.length > 0) {
+          slots.forEach(s => {
+            if (s.category !== 'break' && s.category !== 'na' && s.status !== 'NA') {
+              if (s.totalDurationHours) {
+                planned += s.totalDurationHours;
+              } else if (s.time && s.time.includes('-')) {
+                const parts = s.time.split('-');
+                const parseMins = (t: string) => {
+                  const match = t.trim().match(/(\d+):(\d+)\s*(AM|PM)?/i);
+                  if (!match) return 0;
+                  let h = parseInt(match[1], 10);
+                  let m = parseInt(match[2], 10);
+                  let p = match[3] ? match[3].toUpperCase() : 'AM';
+                  if (p === 'PM' && h < 12) h += 12;
+                  if (p === 'AM' && h === 12) h = 0;
+                  return h * 60 + m;
+                };
+                let start = parseMins(parts[0]);
+                let end = parseMins(parts[1]);
+                if (end < start) end += 1440;
+                planned += (end - start) / 60;
+              } else {
+                planned += 1.5;
+              }
+            }
+          });
         }
-        return state.targetStudyHours || 8;
+
+        const manualTarget = (state.dailyTargets && typeof state.dailyTargets[dateStr] === 'number') 
+          ? state.dailyTargets[dateStr] 
+          : (state.targetStudyHours || 8);
+
+        return planned > 0 ? Number(planned.toFixed(2)) : manualTarget;
       },
       setDailyTarget: (dateStr, target) => {
         set((state) => {
@@ -328,25 +366,12 @@ export const useStore = create<GlobalState>()(
 
       getTotalHoursForDate: (dateStr) => {
         const state = get();
-        const slots = state.schedulesByDate && state.schedulesByDate[dateStr] 
-          ? state.schedulesByDate[dateStr] 
-          : (dateStr === getISTYMD() ? state.timetable : []);
-        
-        let slotCompletedHours = 0;
-        if (Array.isArray(slots) && slots.length > 0) {
-          const studySlots = slots.filter(s => s.category !== 'break');
-          slotCompletedHours = studySlots.reduce((acc, s) => {
-            if (s.status === 'COMPLETED' || s.status === 'PARTIALLY_COMPLETED') {
-              return acc + (s.studiedDurationHours || parseSlotHours(s.time));
-            }
-            if (s.completed && !s.status) { 
-               return acc + parseSlotHours(s.time);
-            }
-            return acc;
-          }, 0);
-        }
-
-        return Number(slotCompletedHours.toFixed(2));
+        // Since recalculateAllMetrics intelligently merges slot hours and history logs 
+        // into studyLogs (using Math.max per subject to avoid double-counting), 
+        // we should simply sum the hours from studyLogs for the given date.
+        const logs = state.studyLogs.filter(l => l.date === dateStr);
+        const total = logs.reduce((acc, log) => acc + log.hours, 0);
+        return Number(total.toFixed(2));
       },
 
       targetStudyHours: 8,
@@ -388,6 +413,10 @@ export const useStore = create<GlobalState>()(
       activeTab: 'master-summary',
       setActiveTab: (tab) => set({ activeTab: tab }),
 
+      selectedGroupFilter: 'BOTH',
+      setSelectedGroupFilter: (group) => set({ selectedGroupFilter: group }),
+
+
       currentSubject: 'fr',
       setCurrentSubject: (subjectId) => set({ currentSubject: subjectId }),
       timerTargetSlotId: null,
@@ -404,7 +433,7 @@ export const useStore = create<GlobalState>()(
         set((state) => {
           // 1. Recalculate completed chapters (topics) for all subjects
           const updatedSubjects = state.subjects.map((sub) => {
-            const completedCount = sub.topics.filter((t) => t.completed).length;
+            const completedCount = sub.topics.filter((t) => t.rev1).length;
             return {
               ...sub,
               completedChapters: completedCount,
@@ -425,9 +454,9 @@ export const useStore = create<GlobalState>()(
               const studied = slot.studiedDurationHours || ((slot.progress || 0) * totalSlotHours / 100) || 0;
               
               let counted = 0;
-              if (slot.status === 'COMPLETED' || slot.completed) {
+              if (slot.status === 'COMPLETED' || slot.rev1) {
                 counted = totalSlotHours;
-              } else if (slot.status === 'PARTIALLY_COMPLETED') {
+              } else if (slot.status === 'PARTIALLY_COMPLETED' || slot.status === 'IN_PROGRESS') {
                 counted = studied;
               } else if (slot.status === 'FAILED') {
                 counted = 0;
@@ -737,11 +766,11 @@ export const useStore = create<GlobalState>()(
           slots.forEach(slot => {
             if (slot.category !== 'break' && slot.category !== 'na' && slot.status !== 'NA' && !slot.isBacklogSettled) {
               const total = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.completed ? total : 0);
+              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.rev1 ? total : 0);
               
               if (slot.status === 'FAILED' || slot.status === 'PARTIALLY_COMPLETED') {
                 totalLapsed += Math.max(0, total - studied);
-              } else if (!slot.completed && slot.status === 'PENDING') {
+              } else if (!slot.rev1 && slot.status === 'PENDING') {
                 const today = getISTYMD();
                 if (dateStr < today) {
                   totalLapsed += Math.max(0, total - studied);
@@ -765,14 +794,14 @@ export const useStore = create<GlobalState>()(
           slots.forEach(slot => {
             if (slot.category !== 'break' && slot.category !== 'na' && slot.status !== 'NA' && !slot.isBacklogSettled) {
               const total = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.completed ? total : 0);
+              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.rev1 ? total : 0);
               
               let debt = 0;
               let isDebt = false;
               if (slot.status === 'FAILED' || slot.status === 'PARTIALLY_COMPLETED') {
                 debt = Math.max(0, total - studied);
                 if (debt > 0) isDebt = true;
-              } else if (!slot.completed && slot.status === 'PENDING') {
+              } else if (!slot.rev1 && slot.status === 'PENDING') {
                 const today = getISTYMD();
                 if (dateStr < today) {
                   debt = Math.max(0, total - studied);
@@ -812,12 +841,12 @@ export const useStore = create<GlobalState>()(
             const updatedSlots = slots.map(slot => {
               if (slot.category !== 'break' && slot.category !== 'na' && slot.status !== 'NA' && !slot.isBacklogSettled) {
                 const total = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-                const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.completed ? total : 0);
+                const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.rev1 ? total : 0);
                 
                 let isLapsed = false;
                 if (slot.status === 'FAILED' || slot.status === 'PARTIALLY_COMPLETED') {
                   isLapsed = true;
-                } else if (!slot.completed && slot.status === 'PENDING') {
+                } else if (!slot.rev1 && slot.status === 'PENDING') {
                   if (dateStr < today) {
                     isLapsed = true;
                   }
@@ -839,7 +868,7 @@ export const useStore = create<GlobalState>()(
           const updatedTodaySchedule = todaySchedule.map(slot => {
             if (slot.category !== 'break' && slot.category !== 'na' && slot.status !== 'NA' && !slot.isBacklogSettled) {
               const total = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.completed ? total : 0);
+              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.rev1 ? total : 0);
               
               if (slot.status === 'FAILED' || slot.status === 'PARTIALLY_COMPLETED') {
                 return { ...slot, isBacklogSettled: true };
@@ -1007,7 +1036,8 @@ export const useStore = create<GlobalState>()(
           subjectStreaks: {},
           statusFilter: 'ALL',
           activeTab: 'master-summary',
-          currentSubject: 'fr',
+          selectedGroupFilter: 'BOTH',
+      currentSubject: 'fr',
           selectedDateStr: getISTYMD(),
           studyHistoryLogs: [],
           customTimetablePresets: [],
@@ -1082,7 +1112,9 @@ export const useStore = create<GlobalState>()(
       }
     }),
     {
-      name: 'ca-final-companion-storage',
+      name: (typeof window !== 'undefined' && localStorage.getItem('ca_active_attempt') && localStorage.getItem('ca_active_attempt') !== 'nov-2026') 
+        ? `ca-final-companion-storage-${localStorage.getItem('ca_active_attempt')?.replace(/\s+/g, '-').toLowerCase()}`
+        : 'ca-final-companion-storage',
       version: 2,
       storage: createJSONStorage(() => idbStateStorage),
       migrate: (persistedState: any, version: number) => {

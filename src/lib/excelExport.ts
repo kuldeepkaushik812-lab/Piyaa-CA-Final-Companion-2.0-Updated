@@ -132,7 +132,7 @@ export async function exportTimetableDashboardToExcel(
 
   // Calculate high level defaults for stats if not passed
   const totalChaptersCount = subjects?.reduce((sum, s) => sum + (s.topics?.length || 0), 0) || 120;
-  const completedChaptersCount = subjects?.reduce((sum, s) => sum + (s.topics?.filter(t => t.completed)?.length || 0), 0) || 50;
+  const completedChaptersCount = subjects?.reduce((sum, s) => sum + (s.topics?.filter(t => t.rev1)?.length || 0), 0) || 50;
   const computedProgress = totalChaptersCount > 0 ? Math.round((completedChaptersCount / totalChaptersCount) * 100) : 42;
 
   const examTargetDate = new Date('2026-11-01').getTime();
@@ -240,7 +240,7 @@ export async function exportTimetableDashboardToExcel(
     row.getCell(3).value = slotType;
     row.getCell(4).value = slot.activity;
     row.getCell(5).value = duration;
-    row.getCell(6).value = slot.completed ? '✅ Completed' : '⏳ Pending';
+    row.getCell(6).value = slot.rev1 ? '✅ Completed' : '⏳ Pending';
     row.getCell(7).value = slot.category ? slot.category.toUpperCase() : 'STANDARD';
 
     // Alignment

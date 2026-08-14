@@ -236,7 +236,6 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
     subject.topics.forEach(t => {
       const hasCompletedOnDate = (t.completedDates && t.completedDates.includes(selectedDateStr)) || 
                                  t.lastCompletedDate === selectedDateStr ||
-                                 t.completedAt === selectedDateStr ||
                                  t.rev1At === selectedDateStr ||
                                  t.rev2At === selectedDateStr ||
                                  t.rev3At === selectedDateStr;
@@ -244,7 +243,6 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
       if (hasCompletedOnDate) {
         // Collect all milestones that were completed on this specific day
         const actions: string[] = [];
-        if (t.completedAt === selectedDateStr) actions.push('Chapter Completed');
         if (t.rev1At === selectedDateStr) actions.push('Revision 1 Completed');
         if (t.rev2At === selectedDateStr) actions.push('Revision 2 Completed');
         if (t.rev3At === selectedDateStr) actions.push('Revision 3 Completed');
@@ -270,8 +268,6 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
         if (t.id !== topicId) return t;
         return {
           ...t,
-          completed: false,
-          completedAt: undefined,
           rev1: false,
           rev1At: undefined,
           rev2: false,
@@ -773,7 +769,7 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
                 </div>
               ) : (
                 <p className="text-xs text-slate-400 italic">
-                  No syllabus chapters were marked completed on {selectedDateStr}. Mark completed chapters in the Syllabus tab!
+                  No syllabus chapters were marked with revisions on {selectedDateStr}. Mark revisions in the Syllabus tab!
                 </p>
               )}
             </div>

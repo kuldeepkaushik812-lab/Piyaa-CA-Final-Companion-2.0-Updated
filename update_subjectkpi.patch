@@ -1,0 +1,129 @@
+--- src/components/SubjectKPIHub.tsx
++++ src/components/SubjectKPIHub.tsx
+@@ -1,4 +1,6 @@
+-import React, { useState, useEffect } from "react";
++import React, { useState, useEffect, useMemo } from "react";
++import { useStore } from "../store";
++import { getISTYMD } from "../lib/dateUtils";
+ import { CASubject } from "../types";
+ import {
+   Flame,
+@@ -35,6 +37,28 @@
+     subjects[0]?.id || "",
+   );
+ 
++  const studyLogs = useStore((state) => state.studyLogs);
++  const allSubjects = useStore((state) => state.subjects);
++  const todayDateStr = getISTYMD();
++
++  const [trackerView, setTrackerView] = useState<'ALL' | 'G1' | 'G2'>('ALL');
++
++  const g1Subjects = useMemo(() => allSubjects.filter((s) => s.group === 1), [allSubjects]);
++  const g2Subjects = useMemo(() => allSubjects.filter((s) => s.group === 2), [allSubjects]);
++
++  const g1Hours = useMemo(() => {
++    return studyLogs
++      .filter((l) => l.date === todayDateStr && g1Subjects.some((s) => s.id === l.subjectId))
++      .reduce((acc, l) => acc + l.hours, 0);
++  }, [studyLogs, todayDateStr, g1Subjects]);
++
++  const g2Hours = useMemo(() => {
++    return studyLogs
++      .filter((l) => l.date === todayDateStr && g2Subjects.some((s) => s.id === l.subjectId))
++      .reduce((acc, l) => acc + l.hours, 0);
++  }, [studyLogs, todayDateStr, g2Subjects]);
++
+   // Local state for editable subject specific streaks
+   const [subjectStreaks, setSubjectStreaks] = useState<Record<string, number>>(
+     () => {
+@@ -236,25 +260,34 @@
+ 
+         {/* Daily Study Tracker (Synced with G-Cal) */}
+         <div className="glass-card p-6 rounded-2xl border border-teal-500/30 flex flex-col mb-8">
+-          <div className="flex items-center justify-between mb-4 pb-2 border-b border-teal-500/20">
++          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4 pb-4 border-b border-teal-500/20">
+             <div className="flex items-center gap-2 text-teal-300">
+               <Clock className="w-5 h-5" />
+               <div className="text-sm font-bold uppercase tracking-wider">
+-                Today's Study Target
++                Study Target
+               </div>
+             </div>
+-            <div className="px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-amber-300 text-xs font-black flex items-center gap-1.5 shadow-md">
+-              <Calendar className="w-3.5 h-3.5 text-amber-300" />
+-              <span>
+-                {currentDayOfMonth}/{totalDaysInMonth} days of {monthName}
+-              </span>
++            <div className="flex items-center gap-2 bg-slate-900/60 p-1 rounded-xl border border-slate-700/50">
++              {(['ALL', 'G1', 'G2'] as const).map(view => (
++                <button
++                  key={view}
++                  onClick={() => setTrackerView(view)}
++                  className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${
++                    trackerView === view 
++                      ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30' 
++                      : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
++                  }`}
++                >
++                  {view}
++                </button>
++              ))}
+             </div>
+           </div>
+ 
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+             <div className="flex flex-col gap-4">
+               {/* Actual Study Hours */}
+               <div className="flex items-center justify-between bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">
+                 <span className="text-xs font-bold text-slate-300">
+-                  Studied Today
++                  {trackerView === 'ALL' ? 'Total Studied' : trackerView === 'G1' ? 'G1 Studied' : 'G2 Studied'}
+                 </span>
+                 <div className="flex items-center gap-3">
+                   <button
+@@ -265,7 +298,7 @@
+                     <ChevronLeft className="w-4 h-4" />
+                   </button>
+                   <span className="text-lg font-black text-white w-12 text-center">
+-                    {studyHoursToday.toFixed(1)}h
++                    {(trackerView === 'ALL' ? studyHoursToday : trackerView === 'G1' ? g1Hours : g2Hours).toFixed(1)}h
+                   </span>
+                   <button
+                     onClick={() => onUpdateStudyHours(0.5)}
+@@ -279,7 +312,7 @@
+               {/* Target Study Hours */}
+               <div className="flex items-center justify-between bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">
+                 <span className="text-xs font-bold text-slate-300">
+-                  Daily Target
++                  {trackerView === 'ALL' ? 'Total Target' : trackerView === 'G1' ? 'G1 Target' : 'G2 Target'}
+                 </span>
+                 <div className="flex items-center gap-3">
+                   <button
+@@ -288,7 +321,7 @@
+                     <ChevronLeft className="w-4 h-4" />
+                   </button>
+                   <span className="text-lg font-black text-amber-300 w-12 text-center">
+-                    {targetStudyHours}h
++                    {(trackerView === 'ALL' ? targetStudyHours : targetStudyHours / 2)}h
+                   </span>
+                   <button
+                     onClick={() => onUpdateTargetHours(1)}
+@@ -328,7 +361,7 @@
+                       251.2 -
+                       (251.2 *
+                         Math.min(
+                           100,
+-                          (studyHoursToday / targetStudyHours) * 100,
++                          ((trackerView === 'ALL' ? studyHoursToday : trackerView === 'G1' ? g1Hours : g2Hours) / (trackerView === 'ALL' ? targetStudyHours : targetStudyHours / 2)) * 100,
+                         )) /
+                         100
+                     }
+@@ -340,7 +373,7 @@
+                   <span className="text-2xl font-black text-teal-300">
+                     {Math.min(
+                       100,
+-                      Math.round((studyHoursToday / targetStudyHours) * 100),
++                      Math.round(((trackerView === 'ALL' ? studyHoursToday : trackerView === 'G1' ? g1Hours : g2Hours) / (trackerView === 'ALL' ? targetStudyHours : targetStudyHours / 2)) * 100),
+                     )}
+                     %
+                   </span>

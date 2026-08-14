@@ -116,7 +116,7 @@ export default function App() {
     };
 
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'ca_companion_active_timer_session' || e.key === 'ca-final-companion-storage') {
+      if (e.key === 'ca_companion_active_timer_session' || e.key?.startsWith('ca-final-companion-storage')) {
         recalculateAllMetrics(getISTYMD());
       }
     };
@@ -209,7 +209,12 @@ export default function App() {
   };
 
   // Curriculum & Timetable State via Zustand Store with automatic local storage persistence & hydration
-  const subjects = useStore(state => state.subjects);
+  const rawSubjects = useStore(state => state.subjects);
+  const selectedGroupFilter = useStore(state => state.selectedGroupFilter);
+  const subjects = useMemo(() => {
+    if (selectedGroupFilter === 'BOTH') return rawSubjects;
+    return rawSubjects.filter(sub => sub.group === selectedGroupFilter);
+  }, [rawSubjects, selectedGroupFilter]);
   const setSubjects = useStore(state => state.setSubjects);
   const timetable = useStore(state => state.timetable);
   const setTimetable = useStore(state => state.setTimetable);
@@ -221,6 +226,9 @@ export default function App() {
   const deleteStudyHistoryLog = useStore(state => state.deleteStudyHistoryLog);
   const recalculateAllMetrics = useStore(state => state.recalculateAllMetrics);
   const selectedDateStr = useStore(state => state.selectedDateStr);
+  const addStudyLog = useStore(state => state.addStudyLog);
+  const addPomodoroProgressToSlot = useStore(state => state.addPomodoroProgressToSlot);
+  const getScheduleForDate = useStore(state => state.getScheduleForDate);
 
   const studyLogs = useStore(state => state.studyLogs);
   const studyHoursToday = useMemo(() => {
@@ -288,11 +296,6 @@ export default function App() {
         let topicMutated = false;
         
         // Revert invalid completion states to pending if interaction timestamps are missing
-        let nextCompleted = t.completed;
-        if (t.completed && !t.completedAt) {
-          nextCompleted = false;
-          topicMutated = true;
-        }
 
         let nextRev1 = t.rev1;
         if (t.rev1 && !t.rev1At) {
@@ -320,7 +323,6 @@ export default function App() {
 
         // Standardize completedDates set
         const datesSet = new Set<string>();
-        if (nextCompleted && t.completedAt) datesSet.add(t.completedAt);
         if (nextRev1 && t.rev1At) datesSet.add(t.rev1At);
         if (nextRev2 && t.rev2At) datesSet.add(t.rev2At);
         if (nextRev3 && t.rev3At) datesSet.add(t.rev3At);
@@ -337,7 +339,6 @@ export default function App() {
           topicMutated || 
           !isDatesArrayIdentical || 
           t.lastCompletedDate !== nextLastCompletedDate ||
-          t.completed !== nextCompleted ||
           t.rev1 !== nextRev1 ||
           t.rev2 !== nextRev2 ||
           t.rev3 !== nextRev3 ||
@@ -363,7 +364,7 @@ export default function App() {
         return {
           ...s,
           topics: topicsValidated,
-          completedChapters: topicsValidated.filter(t => t.completed).length
+          completedChapters: topicsValidated.filter(t => t.rev1).length
         };
       }
       return s;
@@ -423,7 +424,7 @@ export default function App() {
         if (s.id !== subjectId) return s;
         const updatedTopics = s.topics.map((t) => {
           if (t.id === topicId) {
-            const nextCompleted = !t.completed;
+            const nextCompleted = !t.rev1;
             const nextCompletedAt = nextCompleted ? todayKey : undefined;
 
             const datesSet = new Set<string>();
@@ -446,7 +447,7 @@ export default function App() {
           }
           return t;
         });
-        const completedChapters = updatedTopics.filter((t) => t.completed).length;
+        const completedChapters = updatedTopics.filter((t) => t.rev1).length;
         return {
           ...s,
           topics: updatedTopics,
@@ -526,7 +527,10 @@ export default function App() {
     if (togglingSlotsRef.current.has(slotId)) return;
     togglingSlotsRef.current.add(slotId);
 
-    const slot = timetable.find(s => s.id === slotId);
+    const targetDate = selectedDateStr || getISTYMD();
+    const currentSchedule = getScheduleForDate(targetDate);
+    const slot = currentSchedule.find(s => s.id === slotId);
+
     if (slot && slot.category !== 'break') {
       const hours = parseSlotHours(slot.time);
       const matchSubj = subjects.find(sub => sub.name.toLowerCase().includes(slot.subject.toLowerCase()) || sub.code.toLowerCase().includes(slot.subject.toLowerCase()));
@@ -539,7 +543,7 @@ export default function App() {
           log => log.sourceType === 'TIME_TABLE' && 
                  log.subjectId === subjectId && 
                  log.chapterTitle === slot.activity &&
-                 log.dateStr === (selectedDateStr || getISTYMD())
+                 log.dateStr === targetDate
         );
         if (matchingLog) {
           deleteStudyHistoryLog(matchingLog.id);
@@ -549,7 +553,7 @@ export default function App() {
       } else {
         // Log completion in study history & audit ledger
         logStudyActivity({
-          dateStr: selectedDateStr || getISTYMD(),
+          dateStr: targetDate,
           subject: subjName,
           subjectId,
           durationHours: hours,
@@ -559,7 +563,17 @@ export default function App() {
       }
     }
 
-    setTimetable((prev) => prev.map((s) => (s.id === slotId ? { ...s, completed: !s.completed } : s)));
+    const newSchedule = currentSchedule.map((s) => (s.id === slotId ? { ...s, completed: !s.completed } : s));
+    
+    // Determine whether to update master timetable or just the daily schedule
+    const isToday = targetDate === getISTYMD();
+    // For simplicity, we can always update the specific date's schedule
+    const storeState = useStore.getState();
+    if (isToday && storeState.isTodaySyncedWithWeekly !== false) {
+      setTimetable(newSchedule);
+    } else {
+      storeState.setScheduleForDate(targetDate, newSchedule);
+    }
     
     setTimeout(() => {
       togglingSlotsRef.current.delete(slotId);
@@ -567,10 +581,6 @@ export default function App() {
   };
 
   // Session finished
-  const addStudyLog = useStore(state => state.addStudyLog);
-  const addPomodoroProgressToSlot = useStore(state => state.addPomodoroProgressToSlot);
-  const getScheduleForDate = useStore(state => state.getScheduleForDate);
-
   const handleSessionComplete = (minutes: number, subjectId: string, topicId?: string) => {
     const hours = Number((minutes / 60).toFixed(2));
     const todayStr = getISTYMD();
@@ -639,7 +649,7 @@ export default function App() {
 
   // Totals for metrics
   const totalChapters = subjects.reduce((acc, s) => acc + s.topics.length, 0);
-  const completedCount = subjects.reduce((acc, s) => acc + s.topics.filter((t) => t.completed).length, 0);
+  const completedCount = subjects.reduce((acc, s) => acc + s.topics.filter((t) => t.rev1).length, 0);
 
   return (
     <div className={`min-h-screen flex flex-col ${isStandalone ? 'pb-safe' : ''} ${isStrictMode ? 'strict-theme bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-red-950/30 to-slate-950' : 'bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-slate-950'} text-slate-100 font-sans selection:bg-mentor-500 selection:text-white transition-colors duration-700`}>
@@ -768,7 +778,6 @@ export default function App() {
           <div className="max-w-7xl mx-auto space-y-6 animate-fadeIn">
             <StudyBuddyHub currentUserStats={{
               hoursLoggedToday: studyHoursToday,
-              firstReadPercent: totalChapters > 0 ? Math.round((subjects.reduce((acc, s) => acc + s.topics.filter(t => t.completed).length, 0) / totalChapters) * 100) : 0,
               rev1Percent: totalChapters > 0 ? Math.round((subjects.reduce((acc, s) => acc + s.topics.filter(t => t.rev1).length, 0) / totalChapters) * 100) : 0,
               streakDays: Math.max(0, ...Object.values(useStore.getState().subjectStreaks).map(s => s || 0)),
             }} />
@@ -858,7 +867,7 @@ export default function App() {
                 <p className="text-lg font-bold text-teal-200">{timetable.length} Slots</p>
               </div>
               <div className="bg-slate-900/60 p-3 rounded-xl border border-cyan-500/20 col-span-2 sm:col-span-1 shadow-inner">
-                <span className="text-[10px] text-slate-400 uppercase font-mono">Chapters Completed</span>
+                <span className="text-[10px] text-slate-400 uppercase font-mono">Rev 1 Completed</span>
                 <p className="text-lg font-bold text-amber-200">{completedCount} / {totalChapters}</p>
               </div>
             </div>

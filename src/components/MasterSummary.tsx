@@ -387,7 +387,7 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
   };
 
   // Handle toggling chapter revisions directly in drill-down
-  const handleToggleTopicRev = (subjectId: string, topicId: string, revKey: 'rev1' | 'rev2' | 'rev3' | 'completed') => {
+  const handleToggleTopicRev = (subjectId: string, topicId: string, revKey: 'rev1' | 'rev2' | 'rev3') => {
     const todayStr = getISTYMD();
     store.setSubjects(prevSubjects => 
       prevSubjects.map(s => {
@@ -399,8 +399,7 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
           return {
             ...t,
             [revKey]: newVal,
-            [atKey]: newVal ? todayStr : undefined,
-            ...(revKey === 'rev1' && newVal ? { completed: true, completedAt: todayStr } : {})
+            [atKey]: newVal ? todayStr : undefined
           };
         });
         return { ...s, topics: updatedTopics };
@@ -416,7 +415,6 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
     const isGroup1 = subject.group === 1 || String(subject.group) === '1';
     const topics = subject.topics || [];
     const total = topics.length || 1;
-    const firstReading = topics.filter(t => t.completed).length;
     const rev1 = topics.filter(t => t.rev1).length;
     const rev2 = topics.filter(t => t.rev2).length;
     const rev3 = topics.filter(t => t.rev3).length;
@@ -531,8 +529,8 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
 
           {/* Chapters Done */}
           <div className="flex flex-col">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">First Read</span>
-            <span className="font-mono text-sm font-bold text-slate-200">{firstReading}/{total} <span className="text-[10px] text-slate-400">({Math.round((firstReading/total)*100)}%)</span></span>
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Revision 1</span>
+            <span className="font-mono text-sm font-bold text-slate-200">{rev1}/{total} <span className="text-[10px] text-slate-400">({Math.round((rev1/total)*100)}%)</span></span>
           </div>
         </div>
 
@@ -688,7 +686,6 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
                 <thead className="sticky top-0 bg-slate-900 border-b border-slate-800 z-10">
                   <tr>
                     <th className="p-2 font-semibold text-slate-400">Chapter Title</th>
-                    <th className="p-2 font-semibold text-slate-400 text-center">First Read</th>
                     <th className="p-2 font-semibold text-slate-400 text-center">R1</th>
                     <th className="p-2 font-semibold text-slate-400 text-center">R2</th>
                     <th className="p-2 font-semibold text-slate-400 text-center">R3</th>
@@ -700,16 +697,6 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
                       <td className="p-2 font-medium text-slate-200">
                         {topic.title}
                         {topic.important && <span className="ml-1 text-rose-400 font-bold">★ LDR</span>}
-                      </td>
-                      <td className="p-2 text-center">
-                        <button
-                          onClick={() => handleToggleTopicRev(subject.id, topic.id, 'completed')}
-                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold border cursor-pointer ${
-                            topic.completed ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'
-                          }`}
-                        >
-                          {topic.completed ? '✓' : '-'}
-                        </button>
                       </td>
                       <td className="p-2 text-center">
                         <button
@@ -875,7 +862,6 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
             {subjects.map((subject) => {
               const topics = subject.topics || [];
               const total = topics.length || 1;
-              const firstReading = topics.filter(t => t.completed).length;
               const rev1 = topics.filter(t => t.rev1).length;
               const rev2 = topics.filter(t => t.rev2).length;
               const rev3 = topics.filter(t => t.rev3).length;
@@ -1073,7 +1059,6 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
                               <tr>
                                 <th className="p-3 font-semibold text-slate-400">Chapter / Ind AS / Topic Title</th>
                                 <th className="p-3 font-semibold text-slate-400 text-center">Category</th>
-                                <th className="p-3 font-semibold text-slate-400 text-center">First Read</th>
                                 <th className="p-3 font-semibold text-slate-400 text-center">Revision 1 (R1)</th>
                                 <th className="p-3 font-semibold text-slate-400 text-center">Revision 2 (R2)</th>
                                 <th className="p-3 font-semibold text-slate-400 text-center">Revision 3 (R3)</th>
@@ -1100,21 +1085,6 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
                                     }`}>
                                       Cat {topic.category || 'A'}
                                     </span>
-                                  </td>
-                                  <td className="p-3 text-center">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleToggleTopicRev(subject.id, topic.id, 'completed');
-                                      }}
-                                      className={`px-2.5 py-1 rounded-md text-[10px] font-bold border transition-all cursor-pointer ${
-                                        topic.completed 
-                                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
-                                          : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
-                                      }`}
-                                    >
-                                      {topic.completed ? '✓ Done' : 'Pending'}
-                                    </button>
                                   </td>
                                   <td className="p-3 text-center">
                                     <button

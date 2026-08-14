@@ -1622,18 +1622,23 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
                     </span>
                     <button
                       onClick={() => {
+                        const isCompleting = !activeTopicObj.completed;
                         setSubjects((prevSubjects) =>
                           prevSubjects.map((s) => {
                             if (s.id !== selectedSubject.id) return s;
                             return {
                               ...s,
                               topics: s.topics.map((t) =>
-                                t.id === activeTopicObj.id ? { ...t, completed: !t.completed } : t
+                                t.id === activeTopicObj.id ? { ...t, completed: isCompleting } : t
                               )
                             };
                           })
                         );
                         showToast(`✓ Topic "${activeTopicObj.title}" status updated in Syllabus!`);
+                        
+                        if (isCompleting && isRunning && mode === 'work') {
+                           handleStopAndLog();
+                        }
                       }}
                       className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-bold text-[10px] transition-all cursor-pointer flex items-center gap-1"
                     >

@@ -3,7 +3,7 @@ import confetti from 'canvas-confetti';
 import { motion, AnimatePresence } from 'motion/react';
 import { getISTDate } from "../lib/dateUtils.ts";
 import { 
-  BookOpen, 
+  EyeOff, BookOpen, 
   CheckSquare, 
   Square, 
   ChevronDown, 
@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { CASubject } from '../types';
 import { useStore } from '../store';
+import { getAccessToken } from '../lib/auth';
 import { SyllabusManagerModal } from "./SyllabusManagerModal";
 
 interface SubjectTrackerProps {
@@ -52,7 +53,7 @@ const ChapterRow = ({
   const [isPulsing, setIsPulsing] = useState(false);
 
   // Trigger pulse effect when state changes
-  const checkState = `${topic.completed}-${topic.rev1}-${topic.rev2}-${topic.rev3}-${topic.ldr}`;
+  const checkState = `${topic.rev1}-${topic.rev2}-${topic.rev3}-${topic.ldr}`;
   useEffect(() => {
     setIsPulsing(true);
     const t = setTimeout(() => setIsPulsing(false), 400);
@@ -190,6 +191,7 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
   const [showTargetDaysConfig, setShowTargetDaysConfig] = useState<boolean>(false);
   const [isPlanningDays, setIsPlanningDays] = useState(false);
   const [totalDaysForPlanning, setTotalDaysForPlanning] = useState<string>('100');
+  const [isFocusMode, setIsFocusMode] = useState(false);
 
   const isFilterActive = searchQuery.trim() !== '' || statusFilter !== 'ALL' || filterGroup !== 0;
 
@@ -202,7 +204,6 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
   // Overall Syllabus Summary Metrics
   const syllabusMetrics = useMemo(() => {
     let totalChapters = 0;
-    let completed1st = 0;
     let completedRev1 = 0;
     let completedRev2 = 0;
     let completedRev3 = 0;
@@ -215,7 +216,6 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
     subjects.forEach((subj) => {
       subj.topics.forEach((t) => {
         totalChapters++;
-        if (t.completed) completed1st++;
         if (t.rev1) completedRev1++;
         if (t.rev2) completedRev2++;
         if (t.rev3) completedRev3++;
@@ -237,7 +237,6 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
       }
     });
 
-    const pct1st = totalChapters > 0 ? Math.round((completed1st / totalChapters) * 100) : 0;
     const pctRev1 = totalChapters > 0 ? Math.round((completedRev1 / totalChapters) * 100) : 0;
     const pctRev2 = totalChapters > 0 ? Math.round((completedRev2 / totalChapters) * 100) : 0;
     const pctRev3 = totalChapters > 0 ? Math.round((completedRev3 / totalChapters) * 100) : 0;
@@ -246,7 +245,6 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
 
     return {
       totalChapters,
-      completed1st,
       completedRev1,
       completedRev2,
       completedRev3,
@@ -255,7 +253,6 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
       completedMtps,
       totalPyqs,
       completedPyqs,
-      pct1st,
       pctRev1,
       pctRev2,
       pctRev3,
@@ -273,7 +270,6 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
   const handleSyncToTasks = async (subject: CASubject) => {
     setSyncingSubjectId(subject.id);
     try {
-      const { getAccessToken } = await import('../lib/auth.ts');
       const token = await getAccessToken();
       if (!token) {
         alert('Please connect Google account first using the button in the top right!');
@@ -281,7 +277,7 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
         return;
       }
       
-      const pendingTopics = subject.topics.filter(t => !t.completed);
+      const pendingTopics = subject.topics.filter(t => !t.rev1);
       
       for (const topic of pendingTopics) {
         await fetch('https://tasks.googleapis.com/tasks/v1/lists/@default/tasks', {
@@ -357,17 +353,31 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
               </p>
             </div>
             
-            <button
-              onClick={() => setShowTargetDaysConfig(!showTargetDaysConfig)}
-              className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all shadow-sm ${
-                showTargetDaysConfig 
-                  ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' 
-                  : 'bg-slate-900 border-white/10 text-slate-300 hover:text-white hover:border-cyan-500/30'
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              <span>Configure Target Days</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsFocusMode(!isFocusMode)}
+                className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all shadow-sm ${
+                  isFocusMode 
+                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' 
+                    : 'bg-slate-900 border-white/10 text-slate-300 hover:text-white hover:border-amber-500/30'
+                }`}
+                title="Hide all stats/metrics for a distraction-free view"
+              >
+                <EyeOff className="w-4 h-4" />
+                <span>Focus Mode</span>
+              </button>
+              <button
+                onClick={() => setShowTargetDaysConfig(!showTargetDaysConfig)}
+                className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all shadow-sm ${
+                  showTargetDaysConfig 
+                    ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' 
+                    : 'bg-slate-900 border-white/10 text-slate-300 hover:text-white hover:border-cyan-500/30'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+                <span>Configure Target Days</span>
+              </button>
+            </div>
           </div>
 
           {showTargetDaysConfig && (
@@ -432,6 +442,7 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
           )}
 
           {/* Quick Stats Progression Grid */}
+          {!isFocusMode && (
           <div className="md:col-span-12 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-2 border-t border-white/10">
 
             {/* Revision 1 Progress */}
@@ -571,13 +582,10 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
                 <div className="bg-amber-400 h-full rounded-full transition-all duration-700" style={{ width: syllabusMetrics.totalChapters > 0 ? `${(syllabusMetrics.totalLdrStarred / syllabusMetrics.totalChapters) * 100}%` : '0%' }}></div>
               </div>
             </button>
-
           </div>
-
+          )}
         </div>
       </div>
-
-      {/* Search & Status Filters Bar */}
       <div className="glass-panel p-3.5 rounded-2xl border border-cyan-500/30 bg-slate-900/80 backdrop-blur-xl shadow-lg space-y-3">
         <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
           
@@ -763,7 +771,7 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
                     {subj.name}
                   </h3>
 
-                  <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
+                  {!isFocusMode && ( <div className="flex items-center gap-3 text-xs text-slate-400 font-medium">
                     <span>{rev1Count}/{totalCount} Rev 1</span>
                     <span>•</span>
                     <span>{rev2Count}/{totalCount} Rev 2</span>
@@ -775,12 +783,13 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
                         <span className="text-amber-300 font-semibold">⭐ {ldrCount} LDR</span>
                       </>
                     )}
-                  </div>
+                  </div>)}
                 </div>
                 
                 <div className="flex items-center justify-between w-full md:w-auto gap-4 sm:gap-6">
                   
                   {/* Progress Meters */}
+                  {!isFocusMode && (
                   <div className="flex items-center gap-4">
                     <div className="flex flex-col items-end">
                       <div className="flex items-center gap-1.5">
@@ -791,7 +800,7 @@ export const SubjectTracker: React.FC<SubjectTrackerProps> = ({
                         <div className="h-full bg-gradient-to-r from-cyan-500 to-teal-400 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
                       </div>
                     </div>
-                  </div>
+                  </div>)}
                   
                   {/* Actions */}
                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
