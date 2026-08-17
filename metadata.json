@@ -1,6 +1,6 @@
 {
   "name": "Remix Piyaa-CA-Final-Companion 2.0",
-  "description": "Imported from GitHub: kuldeepkaushik812-lab/Piyaa--CA-Final-Companion",
+  "description": "Comprehensive CA Final study companion with real-time timetable planning, custom Excel (Day/Week/Month) timetable import & export, Pomodoro focus tracking, non-overlapping scheduling, and interactive analytics.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

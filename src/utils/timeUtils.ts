@@ -1,35 +1,20 @@
-export function parseSlotHours(timeStr: string): number {
-  if (!timeStr || !timeStr.includes('-')) return 1.5;
-  try {
-    const parts = timeStr.split('-').map((s) => s.trim());
-    if (parts.length !== 2) return 1.5;
+export function parseTimeToMinutes(tStr: string): number {
+  if (!tStr) return 420; // Default to 07:00 AM
+  const cleanStr = tStr.replace(/[\u202f\u00a0]/g, ' ').trim();
+  const match = cleanStr.match(/(\d+):?(\d+)?\s*(AM|PM)?/i);
+  if (!match) return 420;
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2] ? parseInt(match[2], 10) : 0;
+  const period = match[3] ? match[3].toUpperCase() : null;
 
-    const parseTime = (t: string): number => {
-      const match = t.match(/(\d+):?(\d+)?\s*(AM|PM)?/i);
-      if (!match) return 0;
-      let hours = parseInt(match[1], 10);
-      const minutes = match[2] ? parseInt(match[2], 10) : 0;
-      const period = match[3] ? match[3].toUpperCase() : null;
+  if (period === 'PM' && hours < 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
 
-      if (period === 'PM' && hours < 12) hours += 12;
-      if (period === 'AM' && hours === 12) hours = 0;
-
-      return hours + minutes / 60;
-    };
-
-    const start = parseTime(parts[0]);
-    let end = parseTime(parts[1]);
-    if (end < start) end += 24; // Handles overnight e.g. 11 PM - 1 AM
-
-    const diff = end - start;
-    return diff > 0 ? diff : 1.5;
-  } catch (err) {
-    return 1.5;
-  }
+  return hours * 60 + minutes;
 }
 
 export function formatMinutesToTimeStr(totalMinutes: number): string {
-  const mins = (totalMinutes + 1440) % 1440;
+  const mins = ((totalMinutes % 1440) + 1440) % 1440;
   let hrs = Math.floor(mins / 60);
   const m = Math.floor(mins % 60);
   const ampm = hrs >= 12 ? 'PM' : 'AM';
@@ -40,17 +25,75 @@ export function formatMinutesToTimeStr(totalMinutes: number): string {
   return `${hrStr}:${minStr} ${ampm}`;
 }
 
-export function parseTimeToMinutes(tStr: string): number {
-  const match = tStr.match(/(\d+):?(\d+)?\s*(AM|PM)?/i);
-  if (!match) return 420; // Default to 07:00 AM
-  let hours = parseInt(match[1], 10);
-  const minutes = match[2] ? parseInt(match[2], 10) : 0;
-  const period = match[3] ? match[3].toUpperCase() : 'AM';
+export function parseSlotHours(timeStr: string): number {
+  if (!timeStr || !timeStr.includes('-')) return 1.5;
+  try {
+    const parts = timeStr.split('-').map((s) => s.trim());
+    if (parts.length !== 2) return 1.5;
 
-  if (period === 'PM' && hours < 12) hours += 12;
-  if (period === 'AM' && hours === 12) hours = 0;
+    const start = parseTimeToMinutes(parts[0]);
+    let end = parseTimeToMinutes(parts[1]);
+    if (end < start) end += 1440; // Handles overnight e.g. 11 PM - 1 AM
 
-  return hours * 60 + minutes;
+    const diffMins = end - start;
+    const diffHours = diffMins / 60;
+    return diffHours > 0 ? Number(diffHours.toFixed(2)) : 1.5;
+  } catch (err) {
+    return 1.5;
+  }
+}
+
+export function enforceNonOverlappingSlots<T extends { 
+  time?: string; 
+  isFrozen?: boolean; 
+  completed?: boolean; 
+  status?: string; 
+  category?: string;
+  totalDurationHours?: number;
+}>(slots: T[]): T[] {
+  if (!Array.isArray(slots) || slots.length <= 1) return slots;
+
+  const merged = sanitizeAndMergeConsecutiveBreaks(slots);
+  if (merged.length <= 1) return merged;
+
+  const firstTime = merged[0].time?.split('-')[0]?.trim() || '07:00 AM';
+  let currentEndMin = parseTimeToMinutes(firstTime);
+
+  return merged.map((slot) => {
+    if (!slot.time || !slot.time.includes('-')) {
+      const startStr = formatMinutesToTimeStr(currentEndMin);
+      const durMin = Math.round((slot.totalDurationHours || 1.5) * 60);
+      const endMin = currentEndMin + durMin;
+      currentEndMin = endMin;
+      return {
+        ...slot,
+        time: `${startStr} - ${formatMinutesToTimeStr(endMin)}`
+      };
+    }
+
+    const parts = slot.time.split('-').map(s => s.trim());
+    const originalStartMin = parseTimeToMinutes(parts[0]);
+    let originalEndMin = parseTimeToMinutes(parts[1]);
+    if (originalEndMin < originalStartMin) originalEndMin += 1440;
+    const durMin = Math.max(15, originalEndMin - originalStartMin);
+
+    const isLocked = slot.isFrozen || slot.status === 'COMPLETED' || slot.status === 'NA';
+
+    if (isLocked) {
+      currentEndMin = originalEndMin;
+      return slot;
+    }
+
+    // If there is an overlap (scheduled start is earlier than previous slot's end)
+    const effectiveStartMin = Math.max(currentEndMin, originalStartMin);
+    const effectiveEndMin = effectiveStartMin + durMin;
+    currentEndMin = effectiveEndMin;
+
+    return {
+      ...slot,
+      time: `${formatMinutesToTimeStr(effectiveStartMin)} - ${formatMinutesToTimeStr(effectiveEndMin)}`
+    };
+  });
 }
 
 export function enforceStrictTimetableClamping(

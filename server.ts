@@ -446,6 +446,7 @@ Schema:
 // 3. AI Timetable Generator Endpoint
 app.post('/api/generate-timetable', async (req, res) => {
   req.setTimeout(180000);
+  res.setTimeout(180000);
   try {
     const { 
       groupOption, 

@@ -58,6 +58,7 @@ interface DayConfig {
   selectedPrimaryChapterIds: string[];
   selectedSecondaryChapterIds: string[];
   customInstructions: string;
+  revisionMode: 'R1' | 'R2' | 'R3';
 }
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
@@ -163,6 +164,7 @@ export const WeeklyPlannerModal: React.FC<WeeklyPlannerModalProps> = ({
       selectedPrimaryChapterIds: [],
       selectedSecondaryChapterIds: [],
       customInstructions: '',
+      revisionMode: 'R1',
     };
   };
 
@@ -364,6 +366,26 @@ export const WeeklyPlannerModal: React.FC<WeeklyPlannerModalProps> = ({
     if (activeConfig.secondarySubject === 'N/A') return 0;
     return activeConfig.availableHours - allocatedPrimaryHours;
   }, [activeConfig.availableHours, allocatedPrimaryHours, activeConfig.secondarySubject]);
+
+  const pSubObjFilteredTopics = useMemo(() => {
+    if (!pSubObj) return [];
+    return pSubObj.topics.filter(t => {
+       if (activeConfig.revisionMode === 'R1') return !t.rev1;
+       if (activeConfig.revisionMode === 'R2') return !t.rev2;
+       if (activeConfig.revisionMode === 'R3') return !t.rev3;
+       return true;
+    });
+  }, [pSubObj, activeConfig.revisionMode]);
+
+  const sSubObjFilteredTopics = useMemo(() => {
+    if (!sSubObj) return [];
+    return sSubObj.topics.filter(t => {
+       if (activeConfig.revisionMode === 'R1') return !t.rev1;
+       if (activeConfig.revisionMode === 'R2') return !t.rev2;
+       if (activeConfig.revisionMode === 'R3') return !t.rev3;
+       return true;
+    });
+  }, [sSubObj, activeConfig.revisionMode]);
 
   // Manual study list helpers
   const handleAddManualSlot = (category: 'study' | 'break') => {
@@ -1080,12 +1102,33 @@ User Note: ${config.customInstructions || 'None'}
               2. Subject Pairing & Chapters Selection
             </div>
 
+            {/* Revision Strategy (Same as Daily Planner) */}
+            <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-3 shadow-inner">
+              <div className="text-[10px] font-black uppercase text-pink-400 tracking-widest border-b border-pink-500/10 pb-2 flex items-center gap-2">
+                <CheckSquare className="w-3.5 h-3.5 text-pink-400" />
+                <span>Revision Strategy</span>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex-1">
+                  <select
+                    value={activeConfig.revisionMode}
+                    onChange={e => updateActiveConfig({ revisionMode: e.target.value as any })}
+                    className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-4 py-2.5 text-xs text-pink-300 font-bold focus:border-pink-500 focus:outline-none shadow-inner"
+                  >
+                    <option value="R1">R1 Revision (Remaining for R1)</option>
+                    <option value="R2">R2 Revision (Remaining for R2)</option>
+                    <option value="R3">R3 Revision (Remaining for R3)</option>
+                  </select>
+                  <p className="mt-2 text-[9px] text-slate-500 font-medium">Chapters in the scope lists below are automatically filtered based on syllabus completion & this mode.</p>
+                </div>
+              </div>
+            </div>
+
             {/* Subjects Pairing */}
             <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-3 shadow-inner">
               <label className="block text-xs font-extrabold text-emerald-300 uppercase tracking-wider">
                 Select Study Subjects:
               </label>
-
               <div className="space-y-2">
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-300">Primary Subject:</span>
@@ -1099,7 +1142,6 @@ User Note: ${config.customInstructions || 'None'}
                     ))}
                   </select>
                 </div>
-
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-emerald-300/80">Secondary Subject:</span>
                   <select
@@ -1107,7 +1149,7 @@ User Note: ${config.customInstructions || 'None'}
                     onChange={(e) => updateActiveConfig({ secondarySubject: e.target.value })}
                     className="w-full text-slate-100 text-xs font-bold rounded-xl px-3 py-2.5 focus:border-emerald-500 focus:outline-none bg-slate-900 border border-slate-700/80 cursor-pointer"
                   >
-                    <option value="N/A">🚫 N/A (Solo Focus Mode - No Secondary Subject)</option>
+                    <option value="N/A">🚫 N/A (Solo Focus Mode)</option>
                     {subjects
                       .filter((s) => s.name !== activeConfig.primarySubject)
                       .map((s) => (
@@ -1144,71 +1186,85 @@ User Note: ${config.customInstructions || 'None'}
               </div>
             )}
 
-            {/* Chapter selectors */}
+            {/* Chapter selectors (Exact match to Daily AI) */}
             <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-3 shadow-inner">
               <label className="block text-xs font-extrabold text-emerald-300 uppercase tracking-wider">
-                Select Target Chapters:
+                Chapters Scope
               </label>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Primary Subject chapters list */}
                 <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-300">{pSubObj?.code || 'Primary'} Chapters:</span>
-                  <div className="max-h-[160px] overflow-y-auto border border-slate-800 rounded-xl p-2 space-y-1.5 bg-slate-900/60 pr-1">
-                    {pSubObj?.topics && pSubObj.topics.length > 0 ? (
-                      pSubObj.topics.map((t) => {
-                        const isSelected = activeConfig.selectedPrimaryChapterIds.includes(t.id);
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-300">Primary Chapters ({pSubObj?.name || activeConfig.primarySubject})</span>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => updateActiveConfig({ selectedPrimaryChapterIds: pSubObjFilteredTopics.map(t => t.id) })} className="text-[9px] font-bold text-emerald-400 hover:text-emerald-300">Select All</button>
+                      <button onClick={() => updateActiveConfig({ selectedPrimaryChapterIds: [] })} className="text-[9px] font-bold text-slate-500 hover:text-slate-400">Clear</button>
+                    </div>
+                  </div>
+                  <div className="h-36 overflow-y-auto bg-slate-900 border border-slate-700/80 rounded-xl p-2 custom-scrollbar">
+                    {pSubObjFilteredTopics.length === 0 ? (
+                      <div className="text-[10px] text-slate-500 text-center py-6">No matching chapters for this revision mode.</div>
+                    ) : (
+                      pSubObjFilteredTopics.map(topic => {
+                        const isSelected = activeConfig.selectedPrimaryChapterIds.includes(topic.id);
                         return (
-                          <label key={t.id} className="flex items-start gap-1.5 text-[10px] text-slate-300 cursor-pointer hover:text-emerald-300 font-medium select-none">
+                          <label key={topic.id} className="flex items-start gap-1.5 p-1.5 hover:bg-slate-800 rounded cursor-pointer group transition-colors">
                             <input
                               type="checkbox"
                               checked={isSelected}
                               onChange={() => {
                                 const updated = isSelected 
-                                  ? activeConfig.selectedPrimaryChapterIds.filter(id => id !== t.id)
-                                  : [...activeConfig.selectedPrimaryChapterIds, t.id];
+                                  ? activeConfig.selectedPrimaryChapterIds.filter(id => id !== topic.id)
+                                  : [...activeConfig.selectedPrimaryChapterIds, topic.id];
                                 updateActiveConfig({ selectedPrimaryChapterIds: updated });
                               }}
-                              className="accent-emerald-400 mt-0.5"
+                              className="mt-0.5 accent-emerald-500 rounded bg-slate-800 border-slate-600 shrink-0"
                             />
-                            <span>{t.title}</span>
+                            <span className="text-[11px] text-slate-300 leading-tight group-hover:text-emerald-300">{topic.title}</span>
                           </label>
                         );
                       })
-                    ) : (
-                      <span className="text-[10px] text-slate-500">No chapters found</span>
                     )}
                   </div>
                 </div>
 
                 {/* Secondary Subject chapters list */}
                 <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-300">{sSubObj?.code || 'Secondary'} Chapters:</span>
-                  <div className="max-h-[160px] overflow-y-auto border border-slate-800 rounded-xl p-2 space-y-1.5 bg-slate-900/60 pr-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-300">Secondary Chapters {(activeConfig.secondarySubject === 'N/A') ? '(None)' : `(${sSubObj?.name || activeConfig.secondarySubject})`}</span>
+                    {activeConfig.secondarySubject !== 'N/A' && (
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => updateActiveConfig({ selectedSecondaryChapterIds: sSubObjFilteredTopics.map(t => t.id) })} className="text-[9px] font-bold text-teal-400 hover:text-teal-300">Select All</button>
+                        <button onClick={() => updateActiveConfig({ selectedSecondaryChapterIds: [] })} className="text-[9px] font-bold text-slate-500 hover:text-slate-400">Clear</button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="h-36 overflow-y-auto bg-slate-900 border border-slate-700/80 rounded-xl p-2 custom-scrollbar">
                     {activeConfig.secondarySubject === 'N/A' ? (
-                      <span className="text-[10px] text-slate-500 italic block py-4 text-center">Solo Mode (N/A)</span>
-                    ) : sSubObj?.topics && sSubObj.topics.length > 0 ? (
-                      sSubObj.topics.map((t) => {
-                        const isSelected = activeConfig.selectedSecondaryChapterIds.includes(t.id);
+                      <div className="text-[10px] text-slate-500 text-center py-6">Solo Mode Active</div>
+                    ) : sSubObjFilteredTopics.length === 0 ? (
+                      <div className="text-[10px] text-slate-500 text-center py-6">No matching chapters for this revision mode.</div>
+                    ) : (
+                      sSubObjFilteredTopics.map(topic => {
+                        const isSelected = activeConfig.selectedSecondaryChapterIds.includes(topic.id);
                         return (
-                          <label key={t.id} className="flex items-start gap-1.5 text-[10px] text-slate-300 cursor-pointer hover:text-emerald-300 font-medium select-none">
+                          <label key={topic.id} className="flex items-start gap-1.5 p-1.5 hover:bg-slate-800 rounded cursor-pointer group transition-colors">
                             <input
                               type="checkbox"
                               checked={isSelected}
                               onChange={() => {
                                 const updated = isSelected 
-                                  ? activeConfig.selectedSecondaryChapterIds.filter(id => id !== t.id)
-                                  : [...activeConfig.selectedSecondaryChapterIds, t.id];
+                                  ? activeConfig.selectedSecondaryChapterIds.filter(id => id !== topic.id)
+                                  : [...activeConfig.selectedSecondaryChapterIds, topic.id];
                                 updateActiveConfig({ selectedSecondaryChapterIds: updated });
                               }}
-                              className="accent-emerald-400 mt-0.5"
+                              className="mt-0.5 accent-teal-500 rounded bg-slate-800 border-slate-600 shrink-0"
                             />
-                            <span>{t.title}</span>
+                            <span className="text-[11px] text-slate-300 leading-tight group-hover:text-teal-300">{topic.title}</span>
                           </label>
                         );
                       })
-                    ) : (
-                      <span className="text-[10px] text-slate-500">No chapters found</span>
                     )}
                   </div>
                 </div>

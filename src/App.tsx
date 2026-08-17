@@ -18,7 +18,7 @@ import { AIAnswerEvaluator } from './components/AIAnswerEvaluator';
 import { FlashcardVault } from './components/FlashcardVault';
 import { DEFAULT_CA_SUBJECTS, INITIAL_TIMETABLE } from './data/caData';
 import { CASubject, TimetableSlot } from './types';
-import { parseSlotHours } from './utils/timeUtils';
+import { parseSlotHours, parseTimeToMinutes } from './utils/timeUtils';
 import { Sparkles, X, MessageCircle, FileSpreadsheet, Download } from 'lucide-react';
 import { saveProgressToCloud, setupRealtimeCloudSync } from './lib/db';
 import { onAuthUserChanged, auth, isAuthorizedEmail, subscribeAccessControlCloud, syncAccessControlFromCloud } from './lib/auth';
@@ -591,7 +591,6 @@ export default function App() {
     const todayStr = getISTYMD();
     
     // Timetable Tab handling (Explicit selection or implicit "Live Now")
-    const nowStr = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
     const todaySchedule = getScheduleForDate(todayStr);
     
     let targetSlotId: string | null = null;
@@ -600,10 +599,17 @@ export default function App() {
       targetSlotId = topicId.replace('slot-', '');
       targetSlot = todaySchedule.find(s => s.id === targetSlotId);
     } else {
-      // Find implicit slot
+      // Find implicit slot matching current IST time in minutes
+      const istNow = getISTDate();
+      const currentMin = istNow.getHours() * 60 + istNow.getMinutes();
       const implicitSlot = todaySchedule.find(slot => {
-        const parts = slot.time.split(' - ');
-        return parts.length === 2 && nowStr >= parts[0] && nowStr <= parts[1] && slot.category === 'study';
+        if (slot.category !== 'study' || !slot.time || !slot.time.includes('-')) return false;
+        const parts = slot.time.split('-').map(s => s.trim());
+        if (parts.length !== 2) return false;
+        const startMin = parseTimeToMinutes(parts[0]);
+        let endMin = parseTimeToMinutes(parts[1]);
+        if (endMin < startMin) endMin += 1440;
+        return currentMin >= startMin && currentMin <= endMin;
       });
       if (implicitSlot) {
         targetSlotId = implicitSlot.id;

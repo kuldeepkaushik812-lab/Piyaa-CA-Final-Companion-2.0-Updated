@@ -2,14 +2,15 @@ import { getISTDate, formatDisplayDate, getISTYMD, getISTTimeString } from "../l
 import React, { useState, useEffect } from 'react';
 import { 
   Calendar, Clock, Award, ChevronLeft, ChevronRight, 
-  CheckCircle2, Plus, Edit3, Save, X, BookOpen, AlertCircle, FileText, CheckSquare, Trash2, RotateCcw, Zap
+  CheckCircle2, Plus, Edit3, Save, X, BookOpen, AlertCircle, FileText, CheckSquare, Trash2, RotateCcw, Zap, FileSpreadsheet
 } from 'lucide-react';
 import { getAccessToken } from '../lib/auth';
 import { syncEventToGoogleCalendar } from '../lib/calendar';
 import { useStore } from '../store';
 import { TimetableSlot } from '../types';
-import { parseSlotHours, parseTimeToMinutes, formatMinutesToTimeStr } from '../utils/timeUtils';
+import { parseSlotHours, parseTimeToMinutes, formatMinutesToTimeStr, enforceNonOverlappingSlots } from '../utils/timeUtils';
 import { SubjectHoursTable } from './SubjectHoursTable';
+import { ExcelTimetableImportModal } from './ExcelTimetableImportModal';
 
 interface CalendarTrackerProps {
   targetStudyHours?: number;
@@ -76,15 +77,32 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
   const todayStr = getISTYMD(currentDate);
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    const updateTimeState = () => {
       const newNow = getISTDate();
       setCurrentDate(newNow);
       const newTodayStr = getISTYMD(newNow);
       if (todayStr !== newTodayStr && selectedDateStr === todayStr) {
         setSelectedDateStr(newTodayStr);
       }
-    }, 60000);
-    return () => clearInterval(timer);
+    };
+
+    updateTimeState();
+    const timer = setInterval(updateTimeState, 5000); // 5s rapid real-time clock synchronization
+    
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        updateTimeState();
+      }
+    };
+
+    window.addEventListener('focus', updateTimeState);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', updateTimeState);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [todayStr, selectedDateStr]);
 
   const [showSyncToast, setShowSyncToast] = useState(false);
@@ -104,6 +122,8 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
   const [customLogSubject, setCustomLogSubject] = useState<string>('');
   const [isAddingLog, setIsAddingLog] = useState(false);
   const [customTargetHours, setCustomTargetHours] = useState<number>(8);
+  const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
+  const [importSuccessToast, setImportSuccessToast] = useState<string | null>(null);
 
   // States for slot editing
   const [editForm, setEditForm] = useState({ 
@@ -123,8 +143,8 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
     let endMinutes = parseTimeToMinutes(parts[1]);
     const startMinutes = parseTimeToMinutes(parts[0]);
     if (endMinutes < startMinutes) endMinutes += 1440;
-    const istNowStr = getISTTimeString();
-    const currentMinutes = parseTimeToMinutes(istNowStr);
+    const istNow = getISTDate();
+    const currentMinutes = istNow.getHours() * 60 + istNow.getMinutes();
     return currentMinutes > endMinutes;
   };
 
@@ -152,7 +172,7 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
 
     const startMin = parseTimeToMinutes(editForm.startTime);
     const endMin = startMin + Math.round(editForm.duration * 60);
-    const timeStr = `${editForm.startTime} - ${formatMinutesToTimeStr(endMin)}`;
+    const timeStr = `${formatMinutesToTimeStr(startMin)} - ${formatMinutesToTimeStr(endMin)}`;
 
     const newSlot: TimetableSlot = {
       ...oldSlot,
@@ -178,7 +198,10 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
       const newSubjId = getSubjectIdFromName(newSlot.subject);
     }
 
-    const updated = selectedDateSchedule.map(s => s.id === slotId ? newSlot : s);
+    let updated = selectedDateSchedule.map(s => s.id === slotId ? newSlot : s);
+    if (selectedDateStr >= todayStr) {
+      updated = enforceNonOverlappingSlots(updated);
+    }
     setScheduleForDate(selectedDateStr, updated);
     setEditingSlotId(null);
   };
@@ -420,6 +443,15 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
         </div>
         
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto shrink-0 justify-end">
+          <button
+            onClick={() => setIsExcelImportModalOpen(true)}
+            className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-bold text-xs shadow-lg shadow-emerald-600/20 flex items-center gap-2 transition-all cursor-pointer"
+            title="Import custom Excel (.xlsx / .csv) timetable for Day, Week, or Month"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+            <span>📥 Import Excel Timetable</span>
+          </button>
+
           <button
             onClick={handleMasterSync}
             className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-all duration-300 cursor-pointer"
@@ -1089,6 +1121,25 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
 
       {/* Subject-wise Cumulative Aggregate Hours Table (Requirement 3 & 4) */}
       <SubjectHoursTable />
+
+      {/* Toast Notification for Excel Import Success */}
+      {importSuccessToast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[10000] bg-emerald-950/95 border-2 border-emerald-400 text-emerald-100 font-bold px-6 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 backdrop-blur-md animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 animate-bounce" />
+          <span className="text-xs sm:text-sm">{importSuccessToast}</span>
+        </div>
+      )}
+
+      {/* Custom Excel Timetable Importer Modal */}
+      <ExcelTimetableImportModal
+        isOpen={isExcelImportModalOpen}
+        onClose={() => setIsExcelImportModalOpen(false)}
+        initialDateStr={selectedDateStr}
+        onSuccessToast={(msg) => {
+          setImportSuccessToast(msg);
+          setTimeout(() => setImportSuccessToast(null), 5000);
+        }}
+      />
     </div>
   );
 };

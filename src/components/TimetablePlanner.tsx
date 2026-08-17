@@ -5,10 +5,11 @@ import {
   Calendar, Clock, CheckCircle2, Circle, Sparkles, RefreshCw, 
   Award, BookOpen, FileSpreadsheet, ChevronLeft, ChevronRight, 
   CalendarDays, Copy, Play, CheckSquare, Plus, Trash2, Edit3, Save, Layers,
-  Search, Lock, Unlock, Ban, Settings, RotateCcw, Zap } from 'lucide-react';
+  Search, Lock, Unlock, Ban, Settings, RotateCcw, Zap, GripVertical, ArrowUpDown } from 'lucide-react';
 import { TimetableSlot, GeneratedTimetable, SlotStatus, TimetablePreset } from '../types';
 import { WeeklyPlannerModal } from './WeeklyPlannerModal';
-import { parseSlotHours, parseTimeToMinutes, formatMinutesToTimeStr } from '../utils/timeUtils';
+import { ExcelTimetableImportModal } from './ExcelTimetableImportModal';
+import { parseSlotHours, parseTimeToMinutes, formatMinutesToTimeStr, enforceNonOverlappingSlots, sanitizeAndMergeConsecutiveBreaks } from '../utils/timeUtils';
 import { CASubject } from '../types';
 import { exportTimetableDashboardToExcel } from '../lib/excelExport';
 import { fetchWithRetry } from '../lib/api';
@@ -95,6 +96,7 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
     studyHistoryLogs,
     setTimerTargetSlotId,
     setActiveTab,
+    setCurrentSubject,
     dailyShiftMinutes,
     shiftScheduleCascading,
     splitSlotAndMorphSubject,
@@ -110,6 +112,8 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
     setIsTodaySyncedWithWeekly
   } = useStore();
 
+  const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
+  const [importSuccessToast, setImportSuccessToast] = useState<string | null>(null);
   const [morphingSlotId, setMorphingSlotId] = useState<string | null>(null);
   const [selectedMorphSubject, setSelectedMorphSubject] = useState<string>('');
   const [morphTopic, setMorphTopic] = useState<string>('');
@@ -265,21 +269,97 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
   }, [now, slots, selectedDateStr, effectiveNowDate, effectiveCurrentMinutes, hasEveningSlots]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    const updateTimeState = () => {
       const newNow = getISTDate();
       setNow(newNow);
-      // Auto-advance selectedDateStr if it was on the old 'today'
       const newTodayStr = getISTYMD(newNow);
       if (todayStr !== newTodayStr && selectedDateStr === todayStr) {
         setSelectedDateStr(newTodayStr);
       }
-    }, 60000);
-    return () => clearInterval(timer);
+    };
+
+    updateTimeState();
+    const timer = setInterval(updateTimeState, 5000); // 5s rapid real-time clock synchronization
+    
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        updateTimeState();
+      }
+    };
+
+    window.addEventListener('focus', updateTimeState);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', updateTimeState);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [todayStr, selectedDateStr]);
 
 
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [activeTagEditId, setActiveTagEditId] = useState<string | null>(null);
+  const [activeTagValue, setActiveTagValue] = useState<string>('');
+
+  const handleSaveQuickTag = (slotId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const updated = slots.map(s => s.id === slotId ? { ...s, quickTag: activeTagValue.trim() } : s);
+    setScheduleForDate(selectedDateStr, updated);
+    if (selectedDateStr === todayStr) onUpdateSchedule(updated);
+    setActiveTagEditId(null);
+  };
+  
+  const [draggedSlotId, setDraggedSlotId] = useState<string | null>(null);
+  const [dragOverSlotId, setDragOverSlotId] = useState<string | null>(null);
+
+  const handleDropSlot = (targetSlotId: string) => {
+    if (isPastDate || !draggedSlotId || draggedSlotId === targetSlotId) {
+      setDraggedSlotId(null);
+      setDragOverSlotId(null);
+      return;
+    }
+
+    const sourceIdx = slots.findIndex(s => s.id === draggedSlotId);
+    const targetIdx = slots.findIndex(s => s.id === targetSlotId);
+    if (sourceIdx === -1 || targetIdx === -1) {
+      setDraggedSlotId(null);
+      setDragOverSlotId(null);
+      return;
+    }
+
+    const reordered = [...slots];
+    const [movedSlot] = reordered.splice(sourceIdx, 1);
+    reordered.splice(targetIdx, 0, movedSlot);
+
+    const alignedSlots = enforceNonOverlappingSlots(reordered);
+    saveSlots(alignedSlots);
+    setShiftToast('✨ Schedule reordered & non-overlapping times synchronized!');
+    setTimeout(() => setShiftToast(null), 3000);
+    setDraggedSlotId(null);
+    setDragOverSlotId(null);
+  };
+
+  const handleResortChronologically = () => {
+    if (isPastDate || slots.length <= 1) return;
+
+    const sorted = [...slots].sort((a, b) => {
+      const aStartStr = a.time.split('-')[0]?.trim() || '06:00 AM';
+      const bStartStr = b.time.split('-')[0]?.trim() || '06:00 AM';
+      let aMins = parseTimeToMinutes(aStartStr);
+      let bMins = parseTimeToMinutes(bStartStr);
+      if (hasEveningSlots && aMins <= 5 * 60) aMins += 1440;
+      if (hasEveningSlots && bMins <= 5 * 60) bMins += 1440;
+      return aMins - bMins;
+    });
+
+    const aligned = enforceNonOverlappingSlots(sorted);
+    saveSlots(aligned);
+    setShiftToast('🗓️ Schedule re-sorted & aligned without overlaps!');
+    setTimeout(() => setShiftToast(null), 3000);
+  };
+
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ 
     subject: '', 
@@ -543,7 +623,8 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
   const [lunchDuration, setLunchDuration] = useState<string>('45 mins');
   const [dinnerStartTime, setDinnerStartTime] = useState<string>('08:30 PM');
   const [dinnerDuration, setDinnerDuration] = useState<string>('45 mins');
-  const [customAiInstruction, setCustomAiInstruction] = useState<string>('');
+  const [primaryChaptersInput, setPrimaryChaptersInput] = useState<string>('');
+  const [secondaryChaptersInput, setSecondaryChaptersInput] = useState<string>('');
   const [isWeeklyModalOpen, setIsWeeklyModalOpen] = useState<boolean>(false);
   const [showProjection, setShowProjection] = useState<boolean>(false);
 
@@ -652,6 +733,7 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
 
   const [selectedPrimaryChapterIds, setSelectedPrimaryChapterIds] = useState<string[]>([]);
   const [selectedSecondaryChapterIds, setSelectedSecondaryChapterIds] = useState<string[]>([]);
+  const [revisionMode, setRevisionMode] = useState<'R1' | 'R2' | 'R3'>('R1');
 
   const [primaryFilter, setPrimaryFilter] = useState<'all' | 'pending' | 'catA' | 'revision'>('all');
   const [secondaryFilter, setSecondaryFilter] = useState<'all' | 'pending' | 'catA' | 'revision'>('all');
@@ -672,6 +754,26 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
       (s) => s.name === secondarySubject || secondarySubject.includes(s.name) || s.name.includes(secondarySubject)
     );
   }, [subjects, secondarySubject]);
+
+  const pSubObjFilteredTopics = useMemo(() => {
+    if (!pSubObj) return [];
+    return pSubObj.topics.filter(t => {
+       if (revisionMode === 'R1') return !t.rev1;
+       if (revisionMode === 'R2') return !t.rev2;
+       if (revisionMode === 'R3') return !t.rev3;
+       return true;
+    });
+  }, [pSubObj, revisionMode]);
+
+  const sSubObjFilteredTopics = useMemo(() => {
+    if (!sSubObj) return [];
+    return sSubObj.topics.filter(t => {
+       if (revisionMode === 'R1') return !t.rev1;
+       if (revisionMode === 'R2') return !t.rev2;
+       if (revisionMode === 'R3') return !t.rev3;
+       return true;
+    });
+  }, [sSubObj, revisionMode]);
 
   const getEstimatedHoursForTopic = (topic: any) => {
     if (topic.category === 'Category A') return 5.0;
@@ -709,21 +811,9 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
     }, 0);
   }, [sSubObj, selectedSecondaryChapterIds]);
 
-  useEffect(() => {
-    if (pSubObj) {
-      const pendingIds = pSubObj.topics.filter(t => !t.completed).map(t => t.id);
-      setSelectedPrimaryChapterIds(pendingIds.length > 0 ? pendingIds : pSubObj.topics.map(t => t.id));
-    }
-    setPrimarySearch('');
-  }, [primarySubject, pSubObj]);
+  
 
-  useEffect(() => {
-    if (sSubObj) {
-      const pendingIds = sSubObj.topics.filter(t => !t.completed).map(t => t.id);
-      setSelectedSecondaryChapterIds(pendingIds.length > 0 ? pendingIds : sSubObj.topics.map(t => t.id));
-    }
-    setSecondarySearch('');
-  }, [secondarySubject, sSubObj]);
+  
 
   const primaryTopicsToDisplay = useMemo(() => {
     if (!pSubObj) return [];
@@ -773,41 +863,12 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
 
   // Sync edited slots to store for selectedDateStr
   const saveSlots = (newSlots: TimetableSlot[]) => {
-    let mergedSlots = newSlots;
-    if (newSlots.length > 1) {
-      mergedSlots = [];
-      let currentSlot = newSlots[0];
-      for (let i = 1; i < newSlots.length; i++) {
-        const nextSlot = newSlots[i];
-        if (currentSlot.category === 'break' && nextSlot.category === 'break') {
-          // Merge consecutive breaks
-          const startStr = currentSlot.time.split('-')[0]?.trim() || '';
-          const endStr = nextSlot.time.split('-')[1]?.trim() || '';
-          const currentDur = Number(currentSlot.totalDurationHours) || 0;
-          const nextDur = Number(nextSlot.totalDurationHours) || 0;
-          const currentStudied = Number(currentSlot.studiedDurationHours) || 0;
-          const nextStudied = Number(nextSlot.studiedDurationHours) || 0;
-          currentSlot = {
-            ...currentSlot,
-            time: `${startStr} - ${endStr}`,
-            totalDurationHours: currentDur + nextDur,
-            studiedDurationHours: currentStudied + nextStudied,
-            activity: `${currentSlot.activity} & ${nextSlot.activity}`,
-            completed: currentSlot.completed && nextSlot.completed,
-            status: (currentSlot.completed && nextSlot.completed) ? 'COMPLETED' : 'PENDING'
-          };
-        } else {
-          mergedSlots.push(currentSlot);
-          currentSlot = nextSlot;
-        }
-      }
-      mergedSlots.push(currentSlot);
-    }
+    const alignedSlots = enforceNonOverlappingSlots(newSlots);
 
     pushScheduleHistory(selectedDateStr);
-    setScheduleForDate(selectedDateStr, mergedSlots);
+    setScheduleForDate(selectedDateStr, alignedSlots);
     if (selectedDateStr === todayStr) {
-      onUpdateSchedule(mergedSlots);
+      onUpdateSchedule(alignedSlots);
     }
   };
 
@@ -1329,14 +1390,12 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
       const mergedInstructions = `
 Target Date: ${selectedDateStr}.
 Scheduling Mode: ${schedulingMode}.
-${primarySubject} Selected Chapters: ${pSelChapters.length > 0 ? pSelChapters.join('; ') : 'All chapters'}.
-${isSolo ? 'SECONDARY SUBJECT: None (Solo Focus Mode)' : `${secondarySubject} Selected Chapters: ${sSelChapters.length > 0 ? sSelChapters.join('; ') : 'All chapters'}`}.
+${primarySubject} Selected Chapters: (pSelChapters.length > 0 ? pSelChapters.join('; ') : 'All chapters').
+${isSolo ? 'SECONDARY SUBJECT: None (Solo Focus Mode)' : `${secondarySubject} Selected Chapters: (sSelChapters.length > 0 ? sSelChapters.join('; ') : 'All chapters')`}.
 Short Break Duration Preference: ${shortBreakDuration}
 ${lunchDuration === 'N/A' ? 'Lunch Break: DO NOT schedule any lunch break today (Omitted / Skip Break).' : `Lunch Break: Start EXACTLY at ${lunchStartTime} for ${lunchDuration}.`}
-${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break today (Omitted / Skip Break).' : `Dinner Break: Start EXACTLY at ${dinnerStartTime} for ${dinnerDuration}.`}
-User Note: ${customInstructions || 'None'}
-${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTURE SLOTS: ${customAiInstruction}` : ''}
-      `.trim();
+${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break today (Omitted / Skip Break).' : `Dinner Break: Start EXACTLY at ${dinnerStartTime} for ${dinnerDuration}.`}\n${customInstructions ? `Additional User Instructions: ${customInstructions}` : ''}
+`.trim();
 
       let routineText = '';
       if (schedulingMode === 'VARIABLE') {
@@ -1542,6 +1601,16 @@ ${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTU
                 <Settings className="w-4 h-4 text-cyan-400" />
                 <span>⚙️ Manually Edit / Override Today</span>
               </button>
+
+              <button
+                type="button"
+                onClick={handleResortChronologically}
+                className="px-3.5 py-2.5 rounded-xl bg-slate-800/80 hover:bg-cyan-500/20 hover:border-cyan-500/60 border border-slate-700/60 text-cyan-300 font-mono text-sm transition-all cursor-pointer flex items-center gap-1.5 font-bold active:scale-95 shadow-sm"
+                title="Automatically re-sort all slots for this day chronologically from morning to night"
+              >
+                <ArrowUpDown className="w-4 h-4 text-cyan-400" />
+                <span>Re-sort Schedule</span>
+              </button>
             </>
           )}
 
@@ -1555,6 +1624,15 @@ ${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTU
           </button>
 
           <button
+            onClick={() => setIsExcelImportModalOpen(true)}
+            className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600/90 to-teal-700/90 hover:from-emerald-500 hover:to-teal-600 border border-emerald-500/50 text-white font-mono text-sm transition-all cursor-pointer flex items-center gap-2 font-bold shadow-lg shadow-emerald-600/15 active:scale-95"
+            title="Import custom Excel (.xlsx / .csv) timetable for Day, Week, or Month"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+            <span>📥 Import Excel</span>
+          </button>
+
+          <button
             onClick={() => exportTimetableDashboardToExcel(slots, { targetHours: currentDailyTarget }, subjects)}
             className="p-2.5 rounded-2xl bg-slate-900/80 hover:bg-slate-800 text-indigo-300 border border-indigo-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
             title="Export Excel"
@@ -1564,13 +1642,6 @@ ${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTU
         </div>
       </div>
 
-      {/* Strategy Banner */}
-      <div className="glass-panel p-4 rounded-2xl border border-indigo-500/20 bg-indigo-950/20 flex items-center gap-3">
-        <span className="text-xl shrink-0">💡</span>
-        <p className="text-xs text-indigo-200/90 font-medium">
-          {aiAdvice}
-        </p>
-      </div>
 
       {/* Progress Bar & Target Hours Adjuster */}
       <div className="glass-card p-4 rounded-2xl border border-indigo-500/30 flex flex-col gap-3">
@@ -1634,16 +1705,7 @@ ${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTU
             <span className="font-mono font-black text-amber-300">{((dailyShiftMinutes || {})[selectedDateStr] || 0)}m / 45m max</span>
           </span>
 
-          {getTotalBacklogDebtHours && getTotalBacklogDebtHours() > 0 && (
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('open-backlog-modal'))}
-              className="px-2.5 py-1 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-200 hover:border-rose-300 font-extrabold flex items-center gap-1.5 shadow-sm cursor-pointer transition-all hover:scale-105 active:scale-95"
-              title="Click to view complete time, subject, and topic details for all backlog debt slots!"
-            >
-              <span>🎒 Backlog Debt Pool:</span>
-              <span className="font-mono font-black text-rose-300">+{getTotalBacklogDebtHours().toFixed(1)}h</span>
-            </button>
-          )}
+          
 
 
         </div>
@@ -1664,436 +1726,302 @@ ${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTU
       })()}
 
       {/* Slots Timeline Grid */}
-      <div className={`grid grid-cols-1 gap-3.5 ${isPastDate ? 'pointer-events-none opacity-80 grayscale-[20%]' : ''}`}>
-        {filteredSlots.map((slot, slotIndex) => {
-          let start = 0, end = 0;
-          let hasValidTime = false;
-          if (slot.time && slot.time.includes('-')) {
-            const parts = slot.time.split('-').map(s => s.trim());
-            if (parts.length === 2) {
-              start = parseTimeToMinutes(parts[0]);
-              end = parseTimeToMinutes(parts[1]);
-              if (end < start) end += 1440;
-              hasValidTime = true;
-            }
-          }
-          
-          if (hasEveningSlots && end <= 5 * 60) {
-            end += 1440;
-          }
-          if (hasEveningSlots && start <= 5 * 60) {
-            start += 1440;
-          }
-          
-          const isLiveNow = selectedDateStr === effectiveNowDate && hasValidTime && effectiveCurrentMinutes >= start && effectiveCurrentMinutes <= end;
-          const isFailed = slot.status === 'FAILED' && !slot.isUnlocked;
-          const isLocked = slot.isFrozen && !slot.isUnlocked;
-          const isCompleted = slot.status === 'COMPLETED' || slot.completed;
-          const isPartial = slot.status === 'PARTIALLY_COMPLETED';
-          const isNA = slot.status === 'NA' || slot.category === 'na';
-          const isBreak = slot.category === 'break' || slot.subject.toLowerCase() === 'break' || slot.activity.toLowerCase().includes('break');
+      <div className={`overflow-x-auto bg-[#0A121E]/60 rounded-xl border border-slate-700/80 shadow-lg ${isPastDate ? "pointer-events-none opacity-80 grayscale-[20%]" : ""}`}>
+        <table className="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr className="bg-slate-800/80 text-slate-300 border-b border-slate-700">
+              {!isPastDate && <th className="px-2.5 py-3 font-semibold w-8 text-center" title="Drag & drop to reschedule">⠿</th>}
+              <th className="px-4 py-3 font-semibold w-1/4">Time</th>
+              <th className="px-4 py-3 font-semibold w-1/4">Subject</th>
+              <th className="px-4 py-3 font-semibold w-1/3">Chapter</th>
+              <th className="px-4 py-3 font-semibold w-auto">Remarks</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/50">
+            {filteredSlots.map((slot) => {
+              const isBreak = slot.category === "break" || slot.subject.toLowerCase() === "break" || slot.activity.toLowerCase().includes("break");
+              const isCompleted = slot.status === "COMPLETED" || slot.completed;
+              
+              const isPast = isSlotPassed(selectedDateStr, slot.time);
+              let isLive = false;
+              
+              if (selectedDateStr === effectiveNowDate) {
+                const parts = slot.time.split('-').map(s => s.trim());
+                if (parts.length === 2) {
+                   let startMins = parseTimeToMinutes(parts[0]);
+                   let endMins = parseTimeToMinutes(parts[1]);
+                   if (endMins < startMins) endMins += 1440;
+                   
+                   let adjStart = startMins;
+                   if (hasEveningSlots && adjStart <= 5 * 60) adjStart += 1440;
+                   let adjEnd = endMins;
+                   if (hasEveningSlots && adjEnd <= 5 * 60) adjEnd += 1440;
+                   
+                   if (effectiveCurrentMinutes >= adjStart && effectiveCurrentMinutes < adjEnd) {
+                     isLive = true;
+                   }
+                }
+              }
 
-          const totalHrs = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-          const studiedHrs = slot.studiedDurationHours || ((slot.progress || 0) * totalHrs / 100) || (isCompleted ? totalHrs : 0);
+              const isMissed = isPast && !isCompleted && slot.status !== 'IN_PROGRESS' && (slot.studiedDurationHours || 0) === 0;
 
-          // SPEC 3: Distinct, Muted & Slim Break Slots
-          if (isBreak) {
-            return (
-              <div
-                key={slot.id}
-                className="bg-amber-950/10 border border-amber-500/25 rounded-xl h-12 px-4 py-2 flex items-center justify-between text-amber-200/80 transition-all shadow-sm hover:border-amber-500/40"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleToggle(slot.id); }}
-                    className="cursor-pointer text-amber-400 hover:text-amber-300 shrink-0"
+              let rowStyle = "hover:bg-slate-800/30 transition-all cursor-pointer ";
+              
+              const studiedHrs = slot.studiedDurationHours || 0;
+              const totalHrs = parseSlotHours(slot.time) || 2;
+              const progressPercent = Math.min(100, (studiedHrs / totalHrs) * 100);
+              const isPomodoroActive = progressPercent > 0 && progressPercent < 100;
+              
+              if (isBreak) {
+                rowStyle += "bg-amber-950/10 text-amber-200/80 border-l-[3px] border-amber-500/30 ";
+              } else if (isCompleted || progressPercent >= 100) {
+                rowStyle += "opacity-60 text-slate-400 border-l-[3px] border-emerald-500/50 bg-emerald-950/5 ";
+              } else if (isPomodoroActive) {
+                rowStyle += "border-l-[3px] border-cyan-400 bg-cyan-950/20 text-white shadow-[inset_4px_0_15px_rgba(34,211,238,0.15)] ";
+              } else if (isLive) {
+                rowStyle += "border-l-[3px] border-amber-400 bg-amber-950/20 text-white shadow-[inset_4px_0_15px_rgba(251,191,36,0.15)] ";
+              } else if (slot.status === 'FAILED' || isMissed) {
+                rowStyle += "border-l-[3px] border-rose-500/50 bg-rose-950/10 text-rose-300/80 ";
+              } else {
+                rowStyle += "border-l-[3px] border-slate-700 bg-transparent text-slate-100 ";
+              }
+
+              const isDragging = draggedSlotId === slot.id;
+              const isDragTarget = dragOverSlotId === slot.id && draggedSlotId !== slot.id;
+
+              if (isDragging) {
+                rowStyle += "opacity-30 scale-[0.99] bg-slate-900 border-dashed border-2 border-cyan-500 ";
+              } else if (isDragTarget) {
+                rowStyle += "border-t-2 border-cyan-400 bg-cyan-950/50 shadow-md ";
+              }
+
+              if (isBreak) {
+                return (
+                  <tr 
+                    key={slot.id} 
+                    className={rowStyle}
+                    draggable={!isPastDate}
+                    onDragStart={(e) => {
+                      if (isPastDate) return;
+                      setDraggedSlotId(slot.id);
+                      e.dataTransfer.setData('text/plain', slot.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragOver={(e) => {
+                      if (isPastDate) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (dragOverSlotId !== slot.id) setDragOverSlotId(slot.id);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverSlotId === slot.id) setDragOverSlotId(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleDropSlot(slot.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedSlotId(null);
+                      setDragOverSlotId(null);
+                    }}
                   >
-                    {slot.completed ? <CheckSquare className="w-4 h-4 text-emerald-400" /> : <Circle className="w-4 h-4 text-amber-400/60" />}
-                  </button>
-                  <span className="font-mono text-xs font-bold text-amber-300 bg-amber-950/40 border border-amber-500/30 px-2 py-0.5 rounded-lg shrink-0">
-                    {slot.time}
-                  </span>
-                  <span className={`text-xs font-bold truncate ${slot.completed ? 'line-through text-slate-400' : 'text-amber-200/90'}`}>
-                    ☕ {slot.activity || slot.subject || 'Rest Break'}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleToggle(slot.id); }}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      slot.completed 
-                        ? 'bg-slate-800 text-slate-400 hover:bg-slate-700' 
-                        : 'bg-amber-950/40 border border-amber-500/30 text-amber-300 hover:bg-amber-900/40'
-                    }`}
-                  >
-                    {slot.completed ? "↺ Undo" : "✓ Done"}
-                  </button>
-                </div>
-              </div>
-            );
-          }
-
-          const isPastSlot = isPastDate || isSlotPassed(selectedDateStr, slot.time);
-          const canEdit = !isLocked && !isPastSlot;
-
-          // SPEC 1 & 2: Apple/Linear Border-Glow Glassmorphic Theme (Eliminate Full-Card Background Color Flooding)
-          let containerClasses = '';
-          if (isNA) {
-            containerClasses = 'bg-[#0A121E]/60 border border-slate-800/80 border-l-4 border-l-slate-600 text-slate-400 backdrop-blur-md shadow-md opacity-70';
-          } else if (isCompleted) {
-            containerClasses = 'bg-[#0A121E]/80 border-2 border-emerald-500/75 border-l-4 border-l-emerald-400 shadow-[0_0_18px_rgba(16,185,129,0.18)] text-slate-100';
-          } else if (isPartial) {
-            containerClasses = 'bg-[#0A121E]/80 border-2 border-amber-500/75 border-l-4 border-l-amber-400 shadow-[0_0_18px_rgba(245,158,11,0.18)] text-slate-100';
-          } else if (isFailed) {
-            containerClasses = 'bg-[#0A121E]/80 border-2 border-red-500/75 border-l-4 border-l-red-500 shadow-[0_0_18px_rgba(239,68,68,0.18)] opacity-90 text-slate-100';
-          } else {
-            containerClasses = 'bg-[#0A121E]/70 border border-slate-700/80 border-l-4 border-l-cyan-500/50 hover:border-cyan-500/50 transition-all shadow-md text-slate-100';
-          }
-
-          if (isLiveNow && !isFailed && !isCompleted && !isNA) {
-            containerClasses += ' ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-950 animate-pulse-slow';
-          }
-
-          return (
-            <div
-              key={slot.id}
-              className={`flex flex-col justify-between py-3.5 px-5 gap-3 rounded-2xl transition-all group relative backdrop-blur-md ${containerClasses}`}
-            >
-              {/* SPEC 5: Card Header (Time Badge + Subject & Activity Title) */}
-              <div className="flex items-center justify-between gap-3 pb-2.5 border-b border-white/10">
-                {/* Left: Status Indicator + Monospace Time Badge + Status Badges */}
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="shrink-0">
-                    {isCompleted ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-400 stroke-[2.5]" />
-                    ) : isPartial ? (
-                      <CheckCircle2 className="w-5 h-5 text-amber-400 stroke-[2.5]" />
-                    ) : isFailed ? (
-                      <Lock className="w-5 h-5 text-red-400" />
-                    ) : isNA ? (
-                      <Ban className="w-5 h-5 text-slate-500" />
-                    ) : (
-                      <Circle className="w-5 h-5 text-cyan-400/70" />
-                    )}
-                  </div>
-
-                  <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-950/80 border border-white/10 text-cyan-300 shrink-0">
-                    {slot.time}
-                  </span>
-
-                  {/* Status Badges */}
-                  {isCompleted && (
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[10px] font-extrabold flex items-center gap-1 shrink-0">
-                      ✅ COMPLETED
-                    </span>
-                  )}
-                  {isPartial && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-extrabold flex items-center gap-1 shrink-0">
-                      🟡 PARTIAL (50%+)
-                    </span>
-                  )}
-                  {isFailed && (
-                    <span className="px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[10px] font-extrabold flex items-center gap-1 shrink-0">
-                      🔴 LAPSED
-                    </span>
-                  )}
-                  {isLiveNow && !isFailed && !isCompleted && (
-                    <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[10px] font-extrabold flex items-center gap-1 shrink-0 animate-pulse">
-                      🔴 LIVE — {Math.max(0, end - effectiveCurrentMinutes)}m left
-                    </span>
-                  )}
-                </div>
-
-                {/* Center: Bold Subject & Chapter Title */}
-                <div className="min-w-0 flex-1 text-left truncate px-2">
-                  <span className="font-extrabold text-sm text-slate-100 truncate block">
-                    {slot.subject}
-                  </span>
-                  <span className="text-xs text-slate-300/80 truncate block">
-                    {slot.activity}
-                  </span>
-                </div>
-
-                {/* Right: Settings Menu */}
-                <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    onClick={() => setOpenMenuSlotId(openMenuSlotId === slot.id ? null : slot.id)}
-                    className="p-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 transition-colors cursor-pointer"
-                    title="Slot Settings"
-                  >
-                    <Settings className={`w-4 h-4 transition-transform duration-300 ${openMenuSlotId === slot.id ? 'rotate-90 text-white' : ''}`} />
-                  </button>
-
-                  {openMenuSlotId === slot.id && (
-                    <>
-                      <div 
-                        className="fixed inset-0 z-30 cursor-default" 
-                        onClick={() => setOpenMenuSlotId(null)} 
-                      />
-                      <div className="absolute right-0 mt-2 w-52 bg-slate-900 border border-cyan-500/30 rounded-2xl shadow-2xl p-2 z-40 space-y-1 text-xs animate-fadeIn">
-                        {isFailed && (
-                          <button
-                            onClick={(e) => { setOpenMenuSlotId(null); handleOverrideAndUnlock(slot.id, e); }}
-                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-red-500/20 text-red-300 font-semibold flex items-center gap-2 cursor-pointer"
-                          >
-                            <Unlock className={`w-3.5 h-3.5 ${isCompleted ? 'text-emerald-400' : 'text-red-400'}`} />
-                            <span>Override & Unlock</span>
-                          </button>
-                        )}
-                        {canEdit && (
-                          <>
-                            <button
-                              onClick={() => { setOpenMenuSlotId(null); handleStartEdit(slot); }}
-                              className="w-full text-left px-3 py-2 rounded-xl hover:bg-cyan-500/20 text-cyan-200 font-semibold flex items-center gap-2 cursor-pointer"
-                            >
-                              <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
-                              <span>Switch Subject & Topic</span>
-                            </button>
-                            <button
-                              onClick={() => { setOpenMenuSlotId(null); handleToggleNA(slot.id); }}
-                              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-slate-300 font-semibold flex items-center gap-2 cursor-pointer"
-                            >
-                              <Ban className="w-3.5 h-3.5 text-slate-400" />
-                              <span>{isNA ? "Remove N/A" : "Mark as N/A"}</span>
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                setOpenMenuSlotId(null);
-                                const res = shiftScheduleCascading(selectedDateStr, slot.id, 30);
-                                setShiftToast(res.message);
-                                setTimeout(() => setShiftToast(null), 4000);
-                              }}
-                              className="w-full text-left px-3 py-2 rounded-xl hover:bg-amber-500/20 text-amber-200 font-semibold flex items-center gap-2 cursor-pointer"
-                            >
-                              <Clock className="w-3.5 h-3.5 text-amber-400" />
-                              <span>Shift Schedule (+30m)</span>
-                            </button>
-                            <button
-                              onClick={(e) => { setOpenMenuSlotId(null); handleDeleteSlot(slot.id, e); }}
-                              className="w-full text-left px-3 py-2 rounded-xl hover:bg-rose-950/40 text-rose-300 font-semibold flex items-center gap-2 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                              <span>Delete Slot</span>
-                            </button>
-                          </>
-                        )}
-                        {!canEdit && !isFailed && (
-                          <div className="px-3 py-2 text-slate-500 italic text-[10px] text-center">
-                            Past/Locked slots cannot be modified.
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* NEW: Micro-Tasking UI */}
-              {!isNA && slot.category === 'study' && (
-                <div className="py-2 border-t border-white/10">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                      Micro-Tasks
-                    </span>
-                    {(!slot.subTasks || slot.subTasks.length === 0) && !isCompleted && !isLocked && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleGenerateSubTasks(slot); }}
-                        disabled={generatingSubTasksFor === slot.id}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-xs font-bold transition-all border border-indigo-500/30 cursor-pointer disabled:opacity-50"
+                    {!isPastDate && (
+                      <td 
+                        className="px-2.5 py-3 text-center text-slate-500 hover:text-cyan-300 cursor-grab active:cursor-grabbing select-none"
+                        title="Drag to reorder slot"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        {generatingSubTasksFor === slot.id ? (
-                          <div className="w-3 h-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
-                        ) : (
-                          <Sparkles className="w-3 h-3 text-indigo-400" />
-                        )}
-                        <span>AI Breakdown</span>
-                      </button>
+                        <GripVertical className="w-4 h-4 inline-block opacity-60 hover:opacity-100" />
+                      </td>
                     )}
-                  </div>
-                  
-                  {slot.subTasks && slot.subTasks.length > 0 && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                      {slot.subTasks.map(st => (
-                        <div 
-                          key={st.id} 
-                          onClick={(e) => { e.stopPropagation(); if(!isCompleted && !isLocked) handleToggleSubTask(slot.id, st.id); }}
-                          className={`flex items-center gap-2 p-2 rounded-xl border transition-all ${
-                            st.completed 
-                              ? 'bg-emerald-950/20 border-emerald-500/30 opacity-70' 
-                              : 'bg-slate-900/40 border-white/10 hover:border-indigo-500/40 cursor-pointer'
-                          } ${isCompleted || isLocked ? 'cursor-default opacity-60' : ''}`}
-                        >
-                          <div className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 ${
-                            st.completed ? 'bg-emerald-500 border-emerald-400' : 'border-slate-500'
-                          }`}>
-                            {st.completed && <CheckSquare className="w-2.5 h-2.5 text-slate-950 stroke-[3]" />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <span className={`text-[11px] block truncate font-medium ${st.completed ? 'text-emerald-300 line-through' : 'text-slate-300'}`}>
-                              {st.title}
-                            </span>
-                          </div>
-                          <span className={`text-[9px] font-mono font-bold shrink-0 ${st.completed ? 'text-emerald-500/70' : 'text-slate-500'}`}>
-                            {st.durationMins}m
+                    <td className="px-4 py-3 font-mono text-[11px] whitespace-nowrap">{slot.time}</td>
+                    <td className="px-4 py-3 font-medium" colSpan={2}>
+                      <div className="flex items-center gap-2">
+                        <span>☕ {slot.activity || slot.subject || "Rest Break"}</span>
+                        {isLive && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_10px_rgba(251,191,36,0.4)] flex items-center gap-1 shrink-0 animate-pulse">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
+                            LIVE BREAK
                           </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* SPEC 4 & 5: Bottom Action Footer */}
-              {!isNA && (
-                <div className="pt-2 border-t border-white/10 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-                  {isLocked ? (
-                    <div className="flex items-center justify-between w-full">
-                      <div className={`text-xs font-bold flex items-center gap-2 ${isCompleted ? 'text-emerald-300' : 'text-red-300'}`}>
-                        <Lock className={`w-4 h-4 shrink-0 ${isCompleted ? 'text-emerald-400' : 'text-red-400'}`} />
-                        {isCompleted ? (<span>🔒 Completed & Locked — {studiedHrs.toFixed(1)}h / {totalHrs.toFixed(1)}h</span>) : (<span>🔒 Time Lapsed — {studiedHrs.toFixed(1)}h / {totalHrs.toFixed(1)}h Counted</span>)}
+                        )}
                       </div>
-
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleOverrideAndUnlock(slot.id); }}
-                        className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-md cursor-pointer flex items-center gap-1.5 shrink-0 ${isCompleted ? 'bg-emerald-950 hover:bg-emerald-900 border-emerald-500/50 text-emerald-200 hover:text-white' : 'bg-red-950 hover:bg-red-900 border-red-500/50 text-red-200 hover:text-white'}`}
-                      >
-                        <Unlock className={`w-3.5 h-3.5 ${isCompleted ? 'text-emerald-400' : 'text-red-400'}`} />
-                        <span>🔓 Override & Unlock</span>
-                      </button>
-                    </div>
-                  ) : isCompleted ? (
-                    /* SPEC 4: Completed Card Footer — strictly 2.0h / 2.0h and ↺ Undo Completed button */
-                    <div className="flex items-center justify-between w-full">
-                      <span className="font-mono text-xs font-bold text-emerald-300 bg-slate-950/80 border border-emerald-500/30 px-3 py-1 rounded-xl">
-                        {studiedHrs.toFixed(1)}h / {totalHrs.toFixed(1)}h
-                      </span>
-
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleToggle(slot.id, true); }}
-                        className="px-3.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-                        <span>↺ Undo Completed</span>
-                      </button>
-                    </div>
-                  ) : (
-                    /* SPEC 4: Active / Pending Card Footer — strictly ⚡ Start Timer, Switch Subject, +15m/+30m/+1h micro-logs, and ✓ Mark Done */
-                    <>
-                      {/* Left: Quick Actions Group */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* Micro-log Pills */}
-                        <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-white/10">
-                          <span className="text-[10px] font-black uppercase text-cyan-400 px-1">⏱️ Log:</span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              quickAddMicroLog(selectedDateStr, slot.id, 0.25);
-                              setShiftToast(`+15m logged for ${slot.subject}!`);
-                              setTimeout(() => setShiftToast(null), 3000);
-                            }}
-                            className="px-2 py-0.5 rounded-lg text-xs font-bold text-slate-200 hover:bg-cyan-500/20 hover:text-cyan-300 transition-colors cursor-pointer"
-                            title="Quick add +15 minutes"
-                          >
-                            +15m
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              quickAddMicroLog(selectedDateStr, slot.id, 0.5);
-                              setShiftToast(`+30m logged for ${slot.subject}!`);
-                              setTimeout(() => setShiftToast(null), 3000);
-                            }}
-                            className="px-2 py-0.5 rounded-lg text-xs font-bold text-slate-200 hover:bg-cyan-500/20 hover:text-cyan-300 transition-colors cursor-pointer"
-                            title="Quick add +30 minutes"
-                          >
-                            +30m
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              quickAddMicroLog(selectedDateStr, slot.id, 1.0);
-                              setShiftToast(`+1h logged for ${slot.subject}!`);
-                              setTimeout(() => setShiftToast(null), 3000);
-                            }}
-                            className="px-2 py-0.5 rounded-lg text-xs font-bold text-slate-200 hover:bg-cyan-500/20 hover:text-cyan-300 transition-colors cursor-pointer"
-                            title="Quick add +1 hour"
-                          >
-                            +1h
-                          </button>
-                        </div>
-
-                        {/* Start Pomodoro Focus Timer */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setTimerTargetSlotId(slot.id);
-                            setActiveTab('timer');
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-xs font-bold text-amber-300 flex items-center gap-1 transition-all cursor-pointer shadow-sm"
-                          title="Start Pomodoro Focus Timer"
-                        >
-                          <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                          <span>⚡ Start Timer</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={(e) => { e.stopPropagation(); handleToggle(slot.id, true); }} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer ${slot.completed ? "bg-slate-800 text-slate-400" : "bg-amber-950/40 border border-amber-500/30 text-amber-300 hover:bg-amber-900/40"}`}>
+                          {slot.completed ? "Undo" : "Done"}
                         </button>
+                        {isLive && (
+                          <span className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-amber-500/20 border border-amber-500/40 text-amber-300 animate-pulse">
+                            ● RUNNING
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              }
 
-                        {/* Switch Subject & Topic Mid-session Morph */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMorphingSlotId(slot.id);
-                            const defaultSub = subjects[0]?.name || slot.subject;
-                            setSelectedMorphSubject(defaultSub);
-                            const matchedSubObj = subjects.find(s => s.name === defaultSub);
-                            setMorphTopic(matchedSubObj?.topics?.[0]?.title || '');
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-teal-950/80 hover:bg-teal-900 border border-teal-500/40 text-xs font-bold text-teal-200 flex items-center gap-1 transition-all cursor-pointer shadow-sm"
-                          title="Switch Subject & Topic Mid-session"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5 text-teal-400" />
-                          <span>Switch Subject</span>
-                        </button>
-
-                        {/* Emergency Cascading Shift (+15m) */}
-                        {!isSlotPassed(selectedDateStr, slot.time) && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const res = shiftScheduleCascading(selectedDateStr, slot.id, 15);
-                              setShiftToast(res.message);
-                              setTimeout(() => setShiftToast(null), 4000);
+              return (
+                <tr 
+                  key={slot.id} 
+                  className={rowStyle} 
+                  onClick={() => handleStartEdit(slot)}
+                  draggable={!isPastDate}
+                  onDragStart={(e) => {
+                    if (isPastDate) return;
+                    setDraggedSlotId(slot.id);
+                    e.dataTransfer.setData('text/plain', slot.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => {
+                    if (isPastDate) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (dragOverSlotId !== slot.id) setDragOverSlotId(slot.id);
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverSlotId === slot.id) setDragOverSlotId(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    handleDropSlot(slot.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedSlotId(null);
+                    setDragOverSlotId(null);
+                  }}
+                >
+                  {!isPastDate && (
+                    <td 
+                      className="px-2.5 py-3 text-center text-slate-500 hover:text-cyan-300 cursor-grab active:cursor-grabbing select-none"
+                      title="Drag to reorder slot"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <GripVertical className="w-4 h-4 inline-block opacity-60 hover:opacity-100" />
+                    </td>
+                  )}
+                  <td className="px-4 py-3 font-mono text-[11px] whitespace-nowrap">
+                    {slot.time}
+                  </td>
+                  <td className="px-4 py-3 font-medium flex items-center gap-2">
+                    {isCompleted && (
+                       <CheckCircle2 className="w-4 h-4 text-emerald-400 animate-in zoom-in spin-in-12 duration-500 shadow-sm shrink-0" />
+                    )}
+                    {isLive && !isCompleted && (
+                       <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_10px_rgba(251,191,36,0.5)] flex items-center gap-1 shrink-0 animate-pulse">
+                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
+                         LIVE
+                       </span>
+                    )}
+                    <span className={`${isCompleted ? 'line-through decoration-emerald-500/30 text-emerald-100/70' : ''}`}>
+                       {slot.subject}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-1.5">
+                      <div className="truncate max-w-[200px]" title={slot.activity}>{slot.activity}</div>
+                      
+                      {/* Quick Tag Inline Editor */}
+                      <div onClick={(e) => e.stopPropagation()}>
+                        {activeTagEditId === slot.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              autoFocus
+                              type="text"
+                              value={activeTagValue}
+                              onChange={e => setActiveTagValue(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleSaveQuickTag(slot.id);
+                                if (e.key === 'Escape') setActiveTagEditId(null);
+                              }}
+                              onBlur={() => handleSaveQuickTag(slot.id)}
+                              placeholder="e.g. Concept Review"
+                              className="bg-slate-900 border border-emerald-500/50 rounded px-2 py-0.5 text-[10px] text-white focus:outline-none w-32"
+                            />
+                          </div>
+                        ) : slot.quickTag ? (
+                          <div 
+                            className="inline-flex items-center gap-1.5 bg-indigo-950/40 border border-indigo-500/30 text-indigo-300 px-1.5 py-0.5 rounded cursor-pointer hover:bg-indigo-900/60 transition-colors w-fit"
+                            onClick={() => {
+                              setActiveTagValue(slot.quickTag || '');
+                              setActiveTagEditId(slot.id);
                             }}
-                            className="px-2 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-white/10 text-xs font-bold text-slate-300 flex items-center gap-1 transition-all cursor-pointer shadow-sm"
-                            title="Emergency Cascading Shift (+15m)"
                           >
-                            <Clock className="w-3.5 h-3.5 text-cyan-400" />
-                            <span>Shift +15m</span>
+                            <span className="text-[9px] font-bold tracking-wide uppercase">{slot.quickTag}</span>
+                            <Edit3 className="w-2.5 h-2.5 opacity-50" />
+                          </div>
+                        ) : (
+                          <button 
+                            className="text-[9px] font-bold text-slate-500 hover:text-indigo-400 transition-colors uppercase tracking-wide flex items-center gap-1"
+                            onClick={() => {
+                              setActiveTagValue('');
+                              setActiveTagEditId(slot.id);
+                            }}
+                          >
+                            <Plus className="w-3 h-3" /> Add Tag
                           </button>
                         )}
                       </div>
 
-                      {/* Right: Monospace Progress Counter + Primary Mark Done Button */}
-                      <div className="flex items-center gap-3 shrink-0 ml-auto">
-                        <span className="font-mono text-xs font-bold text-cyan-300 bg-slate-950/80 border border-white/10 px-2.5 py-1 rounded-xl">
-                          {studiedHrs.toFixed(1)}h / {totalHrs.toFixed(1)}h
-                        </span>
-
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleToggle(slot.id, true); }}
-                          className="px-4 py-1.5 rounded-xl text-xs font-extrabold bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 transition-all shadow-md shadow-emerald-500/20 cursor-pointer flex items-center gap-1.5"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5 stroke-[3]" />
-                          <span>✓ Mark Done</span>
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                      {(slot.studiedDurationHours !== undefined && slot.studiedDurationHours > 0) && (
+                        <div className="flex items-center gap-2 mt-0.5">
+                           <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden shadow-inner border border-slate-700/50">
+                              <div className="h-full bg-gradient-to-r from-amber-500 to-amber-300 transition-all duration-1000 ease-out relative" style={{ width: `${Math.min(100, ((slot.studiedDurationHours || 0) / (parseSlotHours(slot.time) || 2)) * 100)}%` }}>
+                                {isCompleted && <div className="absolute inset-0 bg-white/20 animate-pulse"></div>}
+                              </div>
+                           </div>
+                           <span className="text-[9px] font-mono font-bold text-amber-400">{slot.studiedDurationHours.toFixed(2)}h / {parseSlotHours(slot.time)}h</span>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleToggle(slot.id, true); }}
+                        className={`px-3 py-1.5 rounded-lg border text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer ${isCompleted ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/30" : "bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700"}`}
+                      >
+                        {isCompleted ? "Undo" : "Done"}
+                      </button>
+                      {!isPastDate && (
+                        isLive ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTimerTargetSlotId(slot.id);
+                              setCurrentSubject(subjects.find(s => s.name.toLowerCase().includes(slot.subject.toLowerCase()) || s.code.toLowerCase().includes(slot.subject.toLowerCase()))?.id || "general");
+                              setActiveTab("timer");
+                            }}
+                            className="px-3.5 py-1.5 rounded-lg border border-amber-400 text-[10px] uppercase font-black tracking-wider bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-[0_0_15px_rgba(251,191,36,0.6)] flex items-center gap-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95 animate-pulse"
+                            title="Jump directly to Live Pomodoro Timer for this running slot"
+                          >
+                            <span className="w-2 h-2 rounded-full bg-red-600 animate-ping shrink-0" />
+                            <span>🔴 LIVE</span>
+                          </button>
+                        ) : !isCompleted ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTimerTargetSlotId(slot.id);
+                              setCurrentSubject(subjects.find(s => s.name.toLowerCase().includes(slot.subject.toLowerCase()) || s.code.toLowerCase().includes(slot.subject.toLowerCase()))?.id || "general");
+                              setActiveTab("timer");
+                            }}
+                            className="px-3 py-1.5 rounded-lg border text-[10px] uppercase font-bold tracking-wider text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 border-cyan-500/30 hover:bg-cyan-900/60 cursor-pointer transition-all active:scale-95"
+                          >
+                            Start
+                          </button>
+                        ) : null
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
+
 
       {/* Toast Notification for Emergency Cascading Shifts */}
       {shiftToast && (
@@ -2495,599 +2423,182 @@ ${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTU
               </button>
             </header>
 
-            {/* Layer 2: Modal Body Grid Wrapper */}
-            <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 overflow-y-auto">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-slate-950/20 p-4 sm:p-6 rounded-3xl border border-white/5">
-              
-              {/* Left Column: Settings Panel (col-span-5) */}
-              <div className="lg:col-span-5 space-y-5 flex flex-col">
-                
-                {/* Section Title */}
-                <div className="text-xs font-black uppercase text-indigo-400 tracking-widest border-b border-indigo-500/10 pb-2">
-                  1. Study Strategy & Target
-                </div>
-
-                {/* Target Date Input */}
-                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-1.5 shadow-inner">
-                  <label className="block text-xs font-extrabold text-indigo-300 uppercase tracking-wider">
-                    Target Study Date:
-                  </label>
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-3 w-4 h-4 text-indigo-400" />
-                    <input
-                      type="date"
-                      value={selectedDateStr}
-                      onChange={(e) => setSelectedDateStr(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-xs text-amber-300 font-bold focus:border-indigo-500 focus:outline-none transition-colors"
-                    />
+            {/* Layer 2: Simplified Modal Body */}
+            <main className="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8 overflow-y-auto">
+              <div className="bg-slate-950/40 p-5 sm:p-8 rounded-3xl border border-slate-800/80 space-y-8 shadow-2xl">
+                <div className="space-y-6">
+                  <div className="space-y-4">
+                  <div className="text-sm font-black uppercase text-pink-400 tracking-widest border-b border-pink-500/10 pb-3 flex items-center gap-2">
+                    <CheckSquare className="w-4 h-4 text-pink-400" />
+                    <span>Revision Strategy</span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="flex-1">
+                      <select
+                        value={revisionMode}
+                        onChange={e => setRevisionMode(e.target.value as any)}
+                        className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-4 py-3 text-sm text-pink-300 font-bold focus:border-pink-500 focus:outline-none shadow-inner"
+                      >
+                        <option value="R1">R1 Revision (Remaining for R1)</option>
+                        <option value="R2">R2 Revision (Remaining for R2)</option>
+                        <option value="R3">R3 Revision (Remaining for R3)</option>
+                      </select>
+                      <p className="mt-2 text-[10px] text-slate-500 font-medium">Chapters in the scope lists below are automatically filtered based on syllabus completion & this mode.</p>
+                    </div>
                   </div>
                 </div>
 
-                {/* Group attempt selector */}
-                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-1.5 shadow-inner">
-                  <label className="block text-xs font-extrabold text-indigo-300 uppercase tracking-wider">
-                    Select Group Attempt:
-                  </label>
-                  <select
-                    value={groupOption}
-                    onChange={(e) => setGroupOption(e.target.value)}
-                    className="w-full text-slate-200 text-xs font-bold rounded-xl px-3 py-3 focus:border-indigo-500 focus:outline-none bg-slate-900 border border-slate-700/80 cursor-pointer"
-                  >
-                    <option value="Both Groups (G1 + G2)">Both Groups (G1 + G2) - 6 Papers</option>
-                    <option value="Group 1 Only">Group 1 Only (FR, AFM, Audit)</option>
-                    <option value="Group 2 Only">Group 2 Only (DT, IDT, IBS)</option>
-                  </select>
+                <div className="text-sm font-black uppercase text-indigo-400 tracking-widest border-b border-indigo-500/10 pb-3 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-indigo-400" />
+                  <span>Time Setup</span>
                 </div>
-
-                {/* Bi-directional Target Study Slider */}
-                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-3.5 shadow-inner">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-extrabold text-indigo-300 uppercase tracking-wider flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-amber-300" />
-                      Target study hours:
-                    </label>
-                    <span className="text-xs font-black text-amber-300 bg-amber-950/80 px-2.5 py-0.5 rounded-full border border-amber-500/40 shadow-sm animate-pulse">
-                      {availableHours} Hours / Day
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={4}
-                    max={16}
-                    step={1}
-                    value={availableHours}
-                    onChange={(e) => {
-                      const nextHrs = Number(e.target.value);
-                      setAvailableHours(nextHrs);
-                      setDailyTarget(selectedDateStr, nextHrs);
-                      if (onUpdateTargetHours) {
-                        onUpdateTargetHours(nextHrs);
-                      }
-                    }}
-                    className="w-full accent-indigo-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                    <span>4h (Light)</span>
-                    <span className="text-indigo-300 font-bold">8h (Optimal)</span>
-                    <span>16h (Strict Daily Limit)</span>
-                  </div>
-                  
-                  <div className="pt-2.5 border-t border-slate-900 flex items-center justify-between">
-                    <span className="text-[10px] text-indigo-300/80 font-bold uppercase tracking-wider">Required Pace (Master Progress):</span>
-                    <span className="text-[10px] font-black font-mono text-cyan-300 bg-cyan-950/60 border border-cyan-500/30 px-2.5 py-0.5 rounded-lg shadow-sm">
-                      ⚡ {getRequiredDailyHours(subjects).toFixed(1)} Hours / Day
-                    </span>
-                  </div>
-                  {/* Sleep Boundary Guard */}
-                  {(() => {
-                    const startMatch = startTimePreference.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-                    if (startMatch) {
-                      let hours = parseInt(startMatch[1]);
-                      const mins = parseInt(startMatch[2]);
-                      const period = startMatch[3] ? startMatch[3].toUpperCase() : 'AM';
-                      if (period === 'PM' && hours < 12) hours += 12;
-                      if (period === 'AM' && hours === 12) hours = 0;
-
-                      let totalMins = hours * 60 + mins;
-                      totalMins += availableHours * 60;
-                      
-                      const slotHrs = parseFloat(slotTimePreference.replace(' Hours', '')) || 2;
-                      const numSlots = Math.ceil(availableHours / slotHrs);
-                      const shortBreakVal = parseInt(shortBreakDuration.replace(' mins', '')) || 15;
-                      totalMins += (numSlots > 1 ? (numSlots - 1) * shortBreakVal : 0);
-
-                      const lunchVal = lunchDuration === 'N/A' ? 0 : (parseInt(lunchDuration.replace(' mins', '')) || 0);
-                      const dinnerVal = dinnerDuration === 'N/A' ? 0 : (parseInt(dinnerDuration.replace(' mins', '')) || 0);
-                      totalMins += lunchVal + dinnerVal;
-
-                      if (totalMins > 26 * 60) {
-                        return (
-                          <div className="mt-2 bg-amber-950/60 border border-amber-500/40 rounded-lg p-2.5 flex items-start gap-2">
-                            <span className="text-[10px]">⚠️</span>
-                            <span className="text-[10px] text-amber-200 font-semibold leading-relaxed">
-                              Daily cap reached. Scheduled slots may cross 02:00 AM. Consider reducing target hours or starting earlier.
-                            </span>
-                          </div>
-                        );
-                      }
-                    }
-                    return null;
-                  })()}
-                </div>
-
-                {isMidDayUpdate && (
-                  <div className="bg-slate-950/50 p-4 rounded-2xl border border-indigo-500/30 space-y-3 shadow-inner">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">🤖</span>
-                      <span className="text-xs font-black uppercase text-indigo-300 tracking-wider">
-                        Ask Custom AI Assistant
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 leading-relaxed">
-                      Type your mid-day study/break adjustments (e.g., "I have a headache, convert my remaining study slots into light theory"). Piyaa will adapt only the uncompleted future slots!
-                    </p>
-                    <textarea
-                      value={customAiInstruction}
-                      onChange={(e) => setCustomAiInstruction(e.target.value)}
-                      placeholder="Type your mid-day constraints or instruction here..."
-                      className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 min-h-[60px] resize-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleGeneratePlan}
-                      disabled={isGenerating || !customAiInstruction.trim()}
-                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-white font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                      <span>⚡ Apply AI Advice to Remaining Slots</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* AI Plan Timetable Config (Strict User Controls) */}
-                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-4 shadow-inner">
-                  <div className="flex items-center justify-between border-b border-indigo-500/10 pb-2">
-                    <span className="text-xs font-black uppercase text-indigo-400 tracking-widest">
-                      2. AI Routine & Customization Engines
-                    </span>
-                  </div>
-
-                  {/* Preset Manager Strip */}
-                  <div className="space-y-2 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
-                        💾 Custom Timetable Presets ({customTimetablePresets.length})
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setShowSavePresetModal(true)}
-                        className="px-2.5 py-1 bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-300 font-mono text-[10px] font-bold rounded-lg cursor-pointer transition-all flex items-center gap-1 shadow-sm"
-                      >
-                        <span>💾 Save Current Setting as Preset</span>
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setStartTimePreference('06:00 AM');
-                          setSchedulingMode('UNIFORM');
-                          setSlotTimePreference('2.0 Hours');
-                          setShortBreakDuration('15 mins');
-                          setLunchStartTime('01:00 PM');
-                          setLunchDuration('45 mins');
-                          setDinnerStartTime('08:30 PM');
-                          setDinnerDuration('45 mins');
-                        }}
-                        className="bg-slate-900/80 border border-slate-700/80 hover:border-cyan-400 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0 flex items-center gap-1.5"
-                      >
-                        <span>🌅 Early Bird (06:00 AM)</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setStartTimePreference('09:00 AM');
-                          setSchedulingMode('UNIFORM');
-                          setSlotTimePreference('2.5 Hours');
-                          setShortBreakDuration('20 mins');
-                          setLunchStartTime('01:30 PM');
-                          setLunchDuration('60 mins');
-                          setDinnerStartTime('09:00 PM');
-                          setDinnerDuration('60 mins');
-                        }}
-                        className="bg-slate-900/80 border border-slate-700/80 hover:border-cyan-400 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0 flex items-center gap-1.5"
-                      >
-                        <span>🦉 Night Owl (09:00 AM)</span>
-                      </button>
-
-                      {customTimetablePresets.map((preset) => (
-                        <div
-                          key={preset.id}
-                          onClick={() => handleLoadPreset(preset)}
-                          className="bg-slate-900/80 border border-slate-700/80 hover:border-cyan-400 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0 flex items-center gap-2 group"
-                        >
-                          <span className="font-bold text-cyan-300">📌 {preset.name}</span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteTimetablePreset(preset.id);
-                            }}
-                            className="text-slate-500 hover:text-red-400 text-xs px-1 rounded transition-colors"
-                            title="Delete Preset"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* 3-Way Scheduling Mode Switcher */}
-                  <div className="space-y-1.5">
-                    <span className="text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider block">
-                      Scheduling Mode
-                    </span>
-                    <div className="grid grid-cols-3 gap-1.5 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
-                      <button
-                        type="button"
-                        onClick={() => setSchedulingMode('UNIFORM')}
-                        className={`py-2 text-[10px] font-bold font-mono rounded-lg transition-all text-center ${
-                          schedulingMode === 'UNIFORM'
-                            ? 'bg-cyan-950/60 border border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] font-black'
-                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                        }`}
-                      >
-                        ⚡ Uniform
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setSchedulingMode('VARIABLE')}
-                        className={`py-2 text-[10px] font-bold font-mono rounded-lg transition-all text-center ${
-                          schedulingMode === 'VARIABLE'
-                            ? 'bg-cyan-950/60 border border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] font-black'
-                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                        }`}
-                      >
-                        🌅 Variable
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setSchedulingMode('MANUAL')}
-                        className={`py-2 text-[10px] font-bold font-mono rounded-lg transition-all text-center ${
-                          schedulingMode === 'MANUAL'
-                            ? 'bg-cyan-950/60 border border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] font-black'
-                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                        }`}
-                      >
-                        🛠️ Manual
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 1st Study Slot Start Time & Last Slot End Time */}
-                  {schedulingMode !== 'MANUAL' && (
-                    <div className="grid grid-cols-2 gap-3 animate-in fade-in duration-200">
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-extrabold text-indigo-300 uppercase block">1st Slot Start Time</span>
-                        <input
-                          type="text"
-                          value={startTimePreference}
-                          onChange={(e) => setStartTimePreference(e.target.value)}
-                          placeholder="e.g. 09:00 AM"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-amber-300 font-mono focus:outline-none focus:border-indigo-500"
-                        />
-                        <div className="flex gap-1">
-                          {['AM', 'PM'].map(p => {
-                            const isActive = startTimePreference.toUpperCase().includes(p);
-                            return (
-                              <button
-                                key={`start-period-${p}`}
-                                type="button"
-                                onClick={() => {
-                                  const base = startTimePreference.replace(/\s*(AM|PM)/i, '').trim() || '09:00';
-                                  setStartTimePreference(`${base} ${p}`);
-                                }}
-                                className={`flex-1 py-1 text-[9px] font-mono rounded-lg border transition-all ${
-                                  isActive 
-                                    ? 'bg-amber-950/40 border-amber-500 text-amber-200' 
-                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850'
-                                }`}
-                              >
-                                {p}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-extrabold text-indigo-300 uppercase block">Last Slot End Time</span>
-                        <input
-                          type="text"
-                          value={endTimePreference}
-                          onChange={(e) => setEndTimePreference(e.target.value)}
-                          placeholder="e.g. 11:00 PM"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-amber-300 font-mono focus:outline-none focus:border-indigo-500"
-                        />
-                        <div className="flex gap-1">
-                          {['AM', 'PM'].map(p => {
-                            const isActive = endTimePreference.toUpperCase().includes(p);
-                            return (
-                              <button
-                                key={`end-period-${p}`}
-                                type="button"
-                                onClick={() => {
-                                  const base = endTimePreference.replace(/\s*(AM|PM)/i, '').trim() || '11:00';
-                                  setEndTimePreference(`${base} ${p}`);
-                                }}
-                                className={`flex-1 py-1 text-[9px] font-mono rounded-lg border transition-all ${
-                                  isActive 
-                                    ? 'bg-amber-950/40 border-amber-500 text-amber-200' 
-                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850'
-                                }`}
-                              >
-                                {p}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* UNIFORM SLOT SIZING */}
-                  {schedulingMode === 'UNIFORM' && (
-                    <div className="space-y-1.5 animate-in fade-in duration-200">
-                      <span className="text-[10px] font-extrabold text-indigo-300 uppercase block">Uniform Study Slot Duration</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider">
+                        Target Study Date
+                      </label>
                       <input
-                        type="text"
-                        value={slotTimePreference}
-                        onChange={(e) => setSlotTimePreference(e.target.value)}
-                        placeholder="e.g. 2.0 Hours"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:outline-none focus:border-indigo-500"
+                        type="date"
+                        value={selectedDateStr}
+                        onChange={(e) => setSelectedDateStr(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-4 py-3 text-sm text-amber-300 font-bold focus:border-indigo-500 focus:outline-none transition-colors shadow-inner"
                       />
                     </div>
-                  )}
-
-                  {/* VARIABLE DAY-PARTING SLOT SIZING */}
-                  {schedulingMode === 'VARIABLE' && (
-                    <div className="space-y-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800 animate-in fade-in duration-200">
-                      <div className="text-[10px] font-extrabold text-amber-300 uppercase tracking-wider">
-                        🌅 Variable Day-Parting Block Durations
-                      </div>
-
-                      {/* Morning Block */}
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-300">🌅 Morning Block (06:00 AM - 01:00 PM)</span>
-                        <input
-                          type="text"
-                          value={variableDurations.morning}
-                          onChange={(e) => setVariableDurations(prev => ({ ...prev, morning: e.target.value }))}
-                          placeholder="e.g. 2.0 Hours"
-                          className="w-full bg-slate-900 border border-slate-750 rounded-xl px-3 py-1.5 text-xs text-amber-300 font-mono focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-
-                      {/* Afternoon Block */}
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-300">☀️ Afternoon Block (02:00 PM - 07:00 PM)</span>
-                        <input
-                          type="text"
-                          value={variableDurations.afternoon}
-                          onChange={(e) => setVariableDurations(prev => ({ ...prev, afternoon: e.target.value }))}
-                          placeholder="e.g. 2.0 Hours"
-                          className="w-full bg-slate-900 border border-slate-750 rounded-xl px-3 py-1.5 text-xs text-amber-300 font-mono focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-
-                      {/* Evening Block */}
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-300">🌙 Evening Block (08:00 PM - 12:00 AM)</span>
-                        <input
-                          type="text"
-                          value={variableDurations.evening}
-                          onChange={(e) => setVariableDurations(prev => ({ ...prev, evening: e.target.value }))}
-                          placeholder="e.g. 1.5 Hours"
-                          className="w-full bg-slate-900 border border-slate-750 rounded-xl px-3 py-1.5 text-xs text-indigo-300 font-mono focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider">
+                        Day Start Time
+                      </label>
+                      <input
+                        type="text"
+                        value={startTimePreference}
+                        onChange={(e) => setStartTimePreference(e.target.value)}
+                        placeholder="e.g. 09:00 AM"
+                        className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-4 py-3 text-sm text-amber-300 font-bold focus:border-indigo-500 focus:outline-none transition-colors shadow-inner"
+                      />
                     </div>
-                  )}
+                  </div>
+                  <div className="space-y-4 pt-4 border-t border-slate-700/50">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider">
+                        Targeted Hrs: {availableHours} Hrs
+                      </label>
+                    </div>
+                    <input
+                      type="range"
+                      min={4}
+                      max={16}
+                      step={1}
+                      value={availableHours}
+                      onChange={(e) => {
+                        const nextHrs = Number(e.target.value);
+                        setAvailableHours(nextHrs);
+                        setDailyTarget(selectedDateStr, nextHrs);
+                        if (onUpdateTargetHours) onUpdateTargetHours(nextHrs);
+                      }}
+                      className="w-full accent-indigo-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-500 font-mono font-medium">
+                      <span>4h</span>
+                      <span className="text-indigo-400/80">8h</span>
+                      <span>16h</span>
+                    </div>
 
-                  {/* 100% MANUAL FEEDING TABLE */}
-                  {schedulingMode === 'MANUAL' && (
-                    <div className="space-y-3 bg-slate-900/90 p-3.5 rounded-xl border border-slate-800 animate-in fade-in duration-200">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-2 gap-2">
-                        <span className="text-[11px] font-bold text-amber-300">🛠️ Manual Timetable Slot Builder</span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleAddManualSlot('study')}
-                            className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer"
-                          >
-                            ➕ Study Slot
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleAddManualSlot('break')}
-                            className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer"
-                          >
-                            ➕ Break
-                          </button>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider">Time Split (Primary)</label>
+                        <input
+                          type="range"
+                          min={20}
+                          max={100}
+                          step={10}
+                          value={splitRatio}
+                          onChange={(e) => setSplitRatio(Number(e.target.value))}
+                          className="w-full accent-teal-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
+                        />
+                        <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                          <span>Pri: {splitRatio}%</span>
+                          <span>Sec: {100 - splitRatio}%</span>
                         </div>
                       </div>
-
-                      <div className="space-y-2 max-h-64 overflow-y-auto pr-1 scrollbar-thin">
-                        {manualSlots.map((slot, index) => (
-                          <div key={slot.id || index} className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col gap-2 text-xs">
-                            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                              <span className="text-[10px] font-mono font-bold text-slate-500 w-4">#{index + 1}</span>
-                              <input
-                                type="text"
-                                value={slot.time}
-                                onChange={(e) => handleUpdateManualSlot(slot.id, { time: e.target.value })}
-                                placeholder="06:00 AM - 08:30 AM"
-                                className="w-36 bg-slate-900 border border-slate-700/80 rounded-lg px-2 py-1 text-[11px] text-amber-300 font-mono"
-                              />
-                              <select
-                                value={slot.category}
-                                onChange={(e) => handleUpdateManualSlot(slot.id, { category: e.target.value as any })}
-                                className="bg-slate-900 border border-slate-700/80 rounded-lg px-2 py-1 text-[11px] text-slate-200 font-bold"
-                              >
-                                <option value="study">Study</option>
-                                <option value="break">Break</option>
-                                <option value="revision">Revision</option>
-                                <option value="mock">Mock Test</option>
-                              </select>
-                              <select
-                                value={slot.subject}
-                                onChange={(e) => handleUpdateManualSlot(slot.id, { subject: e.target.value })}
-                                className="flex-1 min-w-[120px] bg-slate-900 border border-slate-700/80 rounded-lg px-2 py-1 text-[11px] text-slate-100 font-bold"
-                              >
-                                {slot.category === 'break' ? (
-                                  <option value="Break">Break / Refreshment</option>
-                                ) : (
-                                  subjects.map(s => (
-                                    <option key={`man-${s.id}`} value={`${s.code}: ${s.name}`}>{s.code}: {s.name}</option>
-                                  ))
-                                )}
-                              </select>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteManualSlot(slot.id)}
-                                className="p-1 rounded bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors"
-                                title="Remove Slot"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                            <input
-                              type="text"
-                              value={slot.activity}
-                              onChange={(e) => handleUpdateManualSlot(slot.id, { activity: e.target.value })}
-                              placeholder="Chapter / Topic / Activity details..."
-                              className="w-full bg-slate-900 border border-slate-700/60 rounded-lg px-2 py-1 text-[11px] text-indigo-200"
-                            />
+                      <div className="space-y-2">
+                         <div className="flex flex-col text-[10px] text-slate-300 font-mono bg-slate-900 border border-slate-700/80 rounded-lg overflow-hidden">
+                          <div className="flex justify-between bg-slate-800 px-2 py-1 border-b border-slate-700 font-bold">
+                            <span className="w-1/2">Time Split</span>
+                            <span className="w-1/4 text-center">Hrs</span>
+                            <span className="w-1/4 text-center">Min</span>
                           </div>
-                        ))}
+                          <div className="flex justify-between px-2 py-1 border-b border-slate-700">
+                            <span className="w-1/2 text-indigo-300 truncate">Primary Sub</span>
+                            <span className="w-1/4 text-center text-slate-400">{Math.floor(availableHours * (splitRatio/100))}</span>
+                            <span className="w-1/4 text-center text-slate-400">{Math.round((availableHours * (splitRatio/100) % 1) * 60)}</span>
+                          </div>
+                          <div className="flex justify-between px-2 py-1">
+                            <span className="w-1/2 text-teal-300 truncate">Secondary Sub</span>
+                            <span className="w-1/4 text-center text-slate-400">{Math.floor(availableHours * ((100-splitRatio)/100))}</span>
+                            <span className="w-1/4 text-center text-slate-400">{Math.round((availableHours * ((100-splitRatio)/100) % 1) * 60)}</span>
+                          </div>
+                         </div>
+                      </div>
                       </div>
                     </div>
-                  )}
-
-                  {/* Short Break Duration */}
-                  {schedulingMode !== 'MANUAL' && (
-                    <div className="space-y-1.5">
-                      <span className="text-[10px] font-extrabold text-indigo-300 uppercase">Short Break Duration</span>
-                      <div className="grid grid-cols-4 gap-1.5">
-                        {['10 mins', '15 mins', '20 mins', '30 mins'].map(val => (
-                          <button
-                            key={val}
-                            type="button"
-                            onClick={() => setShortBreakDuration(val)}
-                            className={`py-1.5 text-[10px] font-mono rounded-lg transition-all ${
-                              shortBreakDuration === val
-                                ? 'bg-cyan-950/40 border border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.25)]'
-                                : 'bg-slate-900/80 border border-slate-700/80 text-slate-300 hover:bg-slate-800'
-                            }`}
-                          >
-                            {val.replace(' mins', 'm')}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Manual Lunch & Dinner Inputs (Requirement 3) */}
-                  {schedulingMode !== 'MANUAL' && (
-                    <div className="space-y-4 pt-1 animate-in fade-in duration-200">
-                      {/* Lunch Group */}
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-extrabold text-indigo-300 uppercase block">🥪 Lunch Allocation</span>
-                        <div className="flex gap-2">
-                          <div className="flex-1 space-y-1">
-                            <span className="text-[9px] text-slate-400 font-mono block">Start Time</span>
-                            <input
-                              type="text"
-                              value={lunchStartTime}
-                              onChange={(e) => setLunchStartTime(e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
-                              placeholder="e.g. 01:00 PM"
-                            />
-                          </div>
-                          <div className="flex-1 space-y-1">
-                            <span className="text-[9px] text-slate-400 font-mono block">Duration</span>
-                            <input
-                              type="text"
-                              value={lunchDuration}
-                              onChange={(e) => setLunchDuration(e.target.value)}
-                              placeholder="e.g. 45 mins"
-                              className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Dinner Group */}
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-extrabold text-indigo-300 uppercase block">🍛 Dinner Allocation</span>
-                        <div className="flex gap-2">
-                          <div className="flex-1 space-y-1">
-                            <span className="text-[9px] text-slate-400 font-mono block">Start Time</span>
-                            <input
-                              type="text"
-                              value={dinnerStartTime}
-                              onChange={(e) => setDinnerStartTime(e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
-                              placeholder="e.g. 08:30 PM"
-                            />
-                          </div>
-                          <div className="flex-1 space-y-1">
-                            <span className="text-[9px] text-slate-400 font-mono block">Duration</span>
-                            <input
-                              type="text"
-                              value={dinnerDuration}
-                              onChange={(e) => setDinnerDuration(e.target.value)}
-                              placeholder="e.g. 45 mins"
-                              className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Subject Selection Grid */}
-                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-3 shadow-inner grow-0">
-                  <label className="block text-xs font-extrabold text-indigo-300 uppercase tracking-wider">
-                    Select Twin Study Subjects:
-                  </label>
+                  </div>
                   
-                  <div className="space-y-2">
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-bold text-indigo-300/80">Primary Subject:</span>
+                  <div className="space-y-4 pt-4 border-t border-slate-700/50">
+                     <h4 className="text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider mb-2">Events & Breaks</h4>
+                     <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-3 p-3 bg-slate-900/50 border border-slate-700/50 rounded-xl">
+                           <div className="space-y-1.5">
+                             <label className="text-[10px] font-bold text-slate-400">Lunch Time (Start)</label>
+                             <input type="text" value={lunchStartTime} onChange={e => setLunchStartTime(e.target.value)} placeholder="e.g. 01:00 PM" className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-amber-300 font-bold focus:border-indigo-500 focus:outline-none" />
+                           </div>
+                           <div className="space-y-1.5">
+                             <label className="text-[10px] font-bold text-slate-400">Lunch Duration (e.g. 45 mins)</label>
+                             <input type="text" value={lunchDuration} onChange={e => setLunchDuration(e.target.value)} placeholder="e.g. 45 mins" className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-amber-300 font-bold focus:border-indigo-500 focus:outline-none" />
+                           </div>
+                        </div>
+                        <div className="space-y-3 p-3 bg-slate-900/50 border border-slate-700/50 rounded-xl">
+                           <div className="space-y-1.5">
+                             <label className="text-[10px] font-bold text-slate-400">Dinner Time (Start)</label>
+                             <input type="text" value={dinnerStartTime} onChange={e => setDinnerStartTime(e.target.value)} placeholder="e.g. 08:30 PM" className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-amber-300 font-bold focus:border-indigo-500 focus:outline-none" />
+                           </div>
+                           <div className="space-y-1.5">
+                             <label className="text-[10px] font-bold text-slate-400">Dinner Duration (e.g. 45 mins)</label>
+                             <input type="text" value={dinnerDuration} onChange={e => setDinnerDuration(e.target.value)} placeholder="e.g. 45 mins" className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-amber-300 font-bold focus:border-indigo-500 focus:outline-none" />
+                           </div>
+                        </div>
+                     </div>
+                  </div>
+                </div>
+                <div className="space-y-6">
+                  <div className="text-sm font-black uppercase text-amber-400/80 tracking-widest border-b border-amber-500/10 pb-3 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-amber-400/80" />
+                    <span>Subject Focus</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-extrabold text-amber-300/80 uppercase tracking-wider">
+                        Primary Subject
+                      </label>
                       <select
                         value={primarySubject}
                         onChange={(e) => setPrimarySubject(e.target.value)}
-                        className="w-full text-slate-100 text-xs font-bold rounded-xl px-3 py-2.5 focus:border-indigo-500 focus:outline-none bg-slate-900 border border-slate-700/80 cursor-pointer"
+                        className="w-full text-slate-200 text-sm font-bold rounded-xl px-4 py-3 focus:border-amber-500 focus:outline-none bg-slate-900 border border-slate-700/80 cursor-pointer shadow-inner"
                       >
                         {subjects.map((s) => (
                           <option key={`p-${s.id}`} value={s.name}>{s.code}: {s.name}</option>
                         ))}
                       </select>
                     </div>
-
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-bold text-amber-300/80">Secondary Subject:</span>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-extrabold text-amber-300/80 uppercase tracking-wider">
+                        Secondary Subject
+                      </label>
                       <select
                         value={secondarySubject}
                         onChange={(e) => setSecondarySubject(e.target.value)}
-                        className="w-full text-slate-100 text-xs font-bold rounded-xl px-3 py-2.5 focus:border-indigo-500 focus:outline-none bg-slate-900 border border-slate-700/80 cursor-pointer"
+                        className="w-full text-slate-200 text-sm font-bold rounded-xl px-4 py-3 focus:border-amber-500 focus:outline-none bg-slate-900 border border-slate-700/80 cursor-pointer shadow-inner"
                       >
-                        <option value="N/A">🚫 N/A (Solo Focus Mode - No Secondary Subject)</option>
+                        <option value="N/A">🚫 N/A (Solo Focus Mode)</option>
                         {subjects.map((s) => (
                           <option key={`s-${s.id}`} value={s.name}>{s.code}: {s.name}</option>
                         ))}
@@ -3096,535 +2607,112 @@ ${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTU
                   </div>
                 </div>
 
-                {/* Subject Time Split Ratio Control (Primary vs Secondary) */}
-                {secondarySubject !== 'N/A' ? (
-                  <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-3 shadow-inner">
-                    <label className="text-xs font-extrabold text-indigo-300 uppercase tracking-wider block">
-                      Subject Time Split (Manual Feed):
-                    </label>
-                    <div className="flex gap-4">
-                      <div className="flex-1 space-y-1.5">
-                        <label className="text-[10px] font-bold text-indigo-300 uppercase tracking-wide truncate block">
-                          {pSubObj?.code || 'Primary'} (hrs)
-                        </label>
-                        <input 
-                          type="number" 
-                          min="0.5" 
-                          max={availableHours} 
-                          step="0.5" 
-                          value={Number(allocatedPrimaryHours.toFixed(1))}
-                          onChange={(e) => {
-                            const newPrimary = Math.min(Math.max(0.5, Number(e.target.value)), availableHours);
-                            setSplitRatio(Math.round((newPrimary / availableHours) * 100));
-                          }}
-                          className="w-full bg-slate-900 border border-indigo-500/30 rounded-lg p-2.5 text-xs text-white font-bold focus:border-indigo-500 focus:outline-none transition-colors"
-                        />
-                      </div>
-                      <div className="flex-1 space-y-1.5">
-                        <label className="text-[10px] font-bold text-amber-300 uppercase tracking-wide truncate block">
-                          {sSubObj?.code || 'Secondary'} (hrs)
-                        </label>
-                        <input 
-                          type="number" 
-                          min="0" 
-                          max={availableHours - 0.5} 
-                          step="0.5" 
-                          value={Number(allocatedSecondaryHours.toFixed(1))}
-                          onChange={(e) => {
-                            const newSecondary = Math.min(Math.max(0, Number(e.target.value)), availableHours - 0.5);
-                            const newPrimary = availableHours - newSecondary;
-                            setSplitRatio(Math.round((newPrimary / availableHours) * 100));
-                          }}
-                          className="w-full bg-slate-900 border border-amber-500/30 rounded-lg p-2.5 text-xs text-white font-bold focus:border-amber-500 focus:outline-none transition-colors"
-                        />
-                      </div>
+                <div className="space-y-4 pt-4 border-t border-slate-800/80">
+                  <h4 className="text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider mb-2">Chapters Scope</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                       <div className="flex items-center justify-between">
+                         <label className="text-[10px] font-bold text-slate-400">Primary Chapters ({pSubObj?.name || primarySubject})</label>
+                         <div className="flex items-center gap-2">
+                           <button onClick={() => setSelectedPrimaryChapterIds(pSubObjFilteredTopics.map(t => t.id))} className="text-[9px] font-bold text-indigo-400 hover:text-indigo-300">Select All</button>
+                           <button onClick={() => setSelectedPrimaryChapterIds([])} className="text-[9px] font-bold text-slate-500 hover:text-slate-400">Clear</button>
+                         </div>
+                       </div>
+                       <div className="h-36 overflow-y-auto bg-slate-900 border border-slate-700/80 rounded-xl p-2 custom-scrollbar">
+                         {pSubObjFilteredTopics.length === 0 ? (
+                           <div className="text-xs text-slate-500 text-center py-6">No matching chapters for this revision mode.</div>
+                         ) : (
+                           pSubObjFilteredTopics.map(topic => (
+                             <label key={topic.id} className="flex items-start gap-2 p-1.5 hover:bg-slate-800 rounded cursor-pointer group transition-colors">
+                               <input
+                                 type="checkbox"
+                                 checked={selectedPrimaryChapterIds.includes(topic.id)}
+                                 onChange={(e) => {
+                                   if (e.target.checked) {
+                                     setSelectedPrimaryChapterIds(prev => [...prev, topic.id]);
+                                   } else {
+                                     setSelectedPrimaryChapterIds(prev => prev.filter(id => id !== topic.id));
+                                   }
+                                 }}
+                                 className="mt-0.5 accent-indigo-500 rounded bg-slate-800 border-slate-600 shrink-0"
+                               />
+                               <span className="text-[11px] text-slate-300 leading-tight group-hover:text-indigo-300">{topic.title}</span>
+                             </label>
+                           ))
+                         )}
+                       </div>
+                    </div>
+                    <div className="space-y-2">
+                       <div className="flex items-center justify-between">
+                         <label className="text-[10px] font-bold text-slate-400">Secondary Chapters {(secondarySubject === 'N/A') ? '(None)' : `(${sSubObj?.name || secondarySubject})`}</label>
+                         {secondarySubject !== 'N/A' && (
+                           <div className="flex items-center gap-2">
+                             <button onClick={() => setSelectedSecondaryChapterIds(sSubObjFilteredTopics.map(t => t.id))} className="text-[9px] font-bold text-teal-400 hover:text-teal-300">Select All</button>
+                             <button onClick={() => setSelectedSecondaryChapterIds([])} className="text-[9px] font-bold text-slate-500 hover:text-slate-400">Clear</button>
+                           </div>
+                         )}
+                       </div>
+                       <div className="h-36 overflow-y-auto bg-slate-900 border border-slate-700/80 rounded-xl p-2 custom-scrollbar">
+                         {secondarySubject === 'N/A' ? (
+                           <div className="text-xs text-slate-500 text-center py-6">Solo Mode Active</div>
+                         ) : sSubObjFilteredTopics.length === 0 ? (
+                           <div className="text-xs text-slate-500 text-center py-6">No matching chapters for this revision mode.</div>
+                         ) : (
+                           sSubObjFilteredTopics.map(topic => (
+                             <label key={topic.id} className="flex items-start gap-2 p-1.5 hover:bg-slate-800 rounded cursor-pointer group transition-colors">
+                               <input
+                                 type="checkbox"
+                                 checked={selectedSecondaryChapterIds.includes(topic.id)}
+                                 onChange={(e) => {
+                                   if (e.target.checked) {
+                                     setSelectedSecondaryChapterIds(prev => [...prev, topic.id]);
+                                   } else {
+                                     setSelectedSecondaryChapterIds(prev => prev.filter(id => id !== topic.id));
+                                   }
+                                 }}
+                                 className="mt-0.5 accent-teal-500 rounded bg-slate-800 border-slate-600 shrink-0"
+                               />
+                               <span className="text-[11px] text-slate-300 leading-tight group-hover:text-teal-300">{topic.title}</span>
+                             </label>
+                           ))
+                         )}
+                       </div>
                     </div>
                   </div>
-                ) : (
-                  <div className="bg-emerald-950/20 border border-emerald-500/20 p-4 rounded-2xl text-xs font-bold text-emerald-400 flex items-center gap-2">
-                    <span>🎯 Solo Focus Mode: 100% allocated to Primary Subject ({availableHours.toFixed(1)} hrs)</span>
-                  </div>
-                )}
-
-
-
-              </div>
-
-              {/* Right Column: Dynamic Chapter Workspace (col-span-7) */}
-              <div className="lg:col-span-7 space-y-4 flex flex-col min-h-[400px]">
-                
-                {/* Section Title */}
-                <div className="text-xs font-black uppercase text-indigo-400 tracking-widest border-b border-indigo-500/10 pb-2 flex items-center justify-between">
-                  <span>2. Interactive Chapters Selection</span>
-                  <span className="text-[10px] text-slate-400 font-mono normal-case">Select focus chapters for AI customization</span>
                 </div>
 
-                {/* Tab Toggles for Primary vs Secondary Subject */}
-                <div className="flex border-b border-slate-800 shrink-0">
-                  <button
-                    onClick={() => setActiveModalChapterTab('primary')}
-                    className={`flex-1 py-3 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-2 cursor-pointer ${
-                      activeModalChapterTab === 'primary'
-                        ? 'border-indigo-500 text-indigo-300 font-black bg-indigo-950/20'
-                        : 'border-transparent text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <span>📘 Primary Chapters</span>
-                    {pSubObj && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-900/60 text-indigo-200 border border-indigo-500/30">
-                        {selectedPrimaryChapterIds.length}
-                      </span>
-                    )}
-                  </button>
-                  {secondarySubject !== 'N/A' && (
-                    <button
-                      onClick={() => setActiveModalChapterTab('secondary')}
-                      className={`flex-1 py-3 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-2 cursor-pointer ${
-                        activeModalChapterTab === 'secondary'
-                          ? 'border-amber-500 text-amber-300 font-black bg-amber-950/10'
-                          : 'border-transparent text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <span>📙 Secondary Chapters</span>
-                      {sSubObj && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/30">
-                          {selectedSecondaryChapterIds.length}
-                        </span>
-                      )}
-                    </button>
-                  )}
+                <div className="space-y-4 pt-4 border-t border-slate-800/80">
+                  <label className="block text-[10px] font-extrabold text-emerald-400/80 uppercase tracking-wider flex items-center gap-2">
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Custom Instructions for AI (Optional)</span>
+                  </label>
+                  <textarea
+                    value={customInstructions}
+                    onChange={(e) => setCustomInstructions(e.target.value)}
+                    placeholder="e.g. Focus deeply on tricky MCQs, shorter breaks..."
+                    className="w-full bg-slate-900 border border-slate-700/80 hover:border-slate-600 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500/60 min-h-[80px] shadow-inner resize-none transition-colors"
+                  />
                 </div>
-
-                {/* Active Tab Panel */}
-                <div className="flex-1 flex flex-col min-h-0 bg-slate-950/40 rounded-2xl border border-slate-800 p-4 space-y-3.5 shadow-inner">
-                  
-                  {activeModalChapterTab === 'primary' ? (
-                    <>
-                      {/* Real-Time Safety Budget Safeguard Panel */}
-                      <div className="shrink-0">
-                        {totalEstimatedPrimaryHours > allocatedPrimaryHours ? (
-                          <div className="bg-amber-950/50 border border-amber-500/40 text-amber-300 rounded-xl p-3 text-xs flex flex-col gap-1 shadow-sm">
-                            <div className="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wide">
-                              <span>⚠️ Budget Warning (Over-allocation)</span>
-                            </div>
-                            <p className="text-[11px] text-amber-300/80 leading-relaxed font-semibold">
-                              Selected chapters require ~{totalEstimatedPrimaryHours.toFixed(1)}h, exceeding your allocated {allocatedPrimaryHours.toFixed(1)}h budget. 
-                              The AI will automatically prioritize key topics and summarize the rest.
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="bg-emerald-950/55 border border-emerald-500/30 text-emerald-400 rounded-xl p-3 text-xs flex flex-col gap-1 shadow-sm">
-                            <div className="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wide">
-                              <span>✅ Optimal Budget Coverage</span>
-                            </div>
-                            <p className="text-[11px] text-emerald-400/80 leading-relaxed font-semibold">
-                              Selected chapters require ~{totalEstimatedPrimaryHours.toFixed(1)}h, which perfectly fits within your {allocatedPrimaryHours.toFixed(1)}h budget.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Search & Quick Controls: Primary */}
-                      <div className="space-y-2 shrink-0">
-                        <div className="relative">
-                          <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
-                          <input
-                            type="text"
-                            placeholder="Search chapters in Primary Subject..."
-                            value={primarySearch}
-                            onChange={(e) => setPrimarySearch(e.target.value)}
-                            className="w-full bg-slate-900/90 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
-                          />
-                        </div>
-
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1">
-                          {/* Filter Pills */}
-                          <div className="flex items-center gap-1.5 text-[10px] font-bold">
-                            <span className="text-slate-400 mr-1">Filter:</span>
-                            {(['all', 'pending', 'catA'] as const).map(f => (
-                              <button
-                                key={f}
-                                type="button"
-                                onClick={() => setPrimaryFilter(f)}
-                                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                                  primaryFilter === f
-                                    ? 'bg-indigo-600 text-white font-black'
-                                    : 'bg-slate-900 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                                }`}
-                              >
-                                {f === 'all' ? 'All' : f === 'pending' ? 'Pending' : 'Category A'}
-                              </button>
-                            ))}
-                          </div>
-
-                          {/* Selection Helpers */}
-                          <div className="flex items-center gap-2 text-[10px] font-bold">
-                            <button
-                              type="button"
-                              onClick={() => pSubObj && setSelectedPrimaryChapterIds(pSubObj.topics.map(t => t.id))}
-                              className="text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer"
-                            >
-                              Select All
-                            </button>
-                            <span className="text-slate-700">•</span>
-                            <button
-                              type="button"
-                              onClick={() => pSubObj && setSelectedPrimaryChapterIds(pSubObj.topics.filter(t => !t.completed).map(t => t.id))}
-                              className="text-amber-300 hover:text-amber-200 hover:underline cursor-pointer"
-                            >
-                              Select Pending
-                            </button>
-                            <span className="text-slate-700">•</span>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedPrimaryChapterIds([])}
-                              className="text-slate-400 hover:text-slate-300 hover:underline cursor-pointer"
-                            >
-                              Clear
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Chapters Scrolling Area (Primary) */}
-                      <div className="flex-1 overflow-y-auto max-h-64 sm:max-h-80 pr-1 space-y-1.5 scrollbar-thin">
-                        {primaryTopicsToDisplay.length === 0 ? (
-                          <div className="text-center py-10 text-xs text-slate-500">
-                            No chapters found matching search filters. 🔍
-                          </div>
-                        ) : (
-                          primaryTopicsToDisplay.map((topic) => {
-                            const isSelected = selectedPrimaryChapterIds.includes(topic.id);
-                            return (
-                              <div
-                                key={topic.id}
-                                onClick={() => togglePrimaryTopic(topic.id)}
-                                className={`flex items-center justify-between p-3 rounded-xl border text-xs cursor-pointer transition-all ${
-                                  isSelected
-                                    ? 'bg-indigo-950/40 border-indigo-500/50 text-indigo-100 font-semibold shadow-md shadow-indigo-500/5'
-                                    : 'bg-slate-900/30 border-slate-800/80 text-slate-400 hover:border-slate-700 hover:bg-slate-900/50'
-                                } hover:scale-[1.01]`}
-                              >
-                                <div className="flex items-center gap-3 overflow-hidden pr-2">
-                                  <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all ${
-                                    isSelected ? 'bg-indigo-500 border-indigo-400 text-slate-950 font-bold' : 'border-slate-600'
-                                  }`}>
-                                    {isSelected && <CheckCircle2 className="w-3 h-3 stroke-[3]" />}
-                                  </div>
-                                  <span className="truncate text-slate-200 text-[11px] sm:text-xs">{topic.title}</span>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  {topic.category && (
-                                    <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-indigo-900/50 text-indigo-300 font-black border border-indigo-500/20">
-                                      {topic.category}
-                                    </span>
-                                  )}
-                                  {topic.completed ? (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 font-bold border border-emerald-500/20 shrink-0">
-                                      Done ✅
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/40 text-amber-300 font-bold border border-amber-500/20 shrink-0">
-                                      Pending
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      {/* Real-Time Safety Budget Safeguard Panel */}
-                      <div className="shrink-0">
-                        {totalEstimatedSecondaryHours > allocatedSecondaryHours ? (
-                          <div className="bg-amber-950/50 border border-amber-500/40 text-amber-300 rounded-xl p-3 text-xs flex flex-col gap-1 shadow-sm">
-                            <div className="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wide">
-                              <span>⚠️ Budget Warning (Over-allocation)</span>
-                            </div>
-                            <p className="text-[11px] text-amber-300/80 leading-relaxed font-semibold">
-                              Selected chapters require ~{totalEstimatedSecondaryHours.toFixed(1)}h, exceeding your allocated {allocatedSecondaryHours.toFixed(1)}h budget.
-                              The AI will automatically prioritize key topics and summarize the rest.
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="bg-emerald-950/55 border border-emerald-500/30 text-emerald-400 rounded-xl p-3 text-xs flex flex-col gap-1 shadow-sm">
-                            <div className="flex items-center gap-1.5 font-extrabold text-[11px] uppercase tracking-wide">
-                              <span>✅ Optimal Budget Coverage</span>
-                            </div>
-                            <p className="text-[11px] text-emerald-400/80 leading-relaxed font-semibold">
-                              Selected chapters require ~{totalEstimatedSecondaryHours.toFixed(1)}h, which perfectly fits within your {allocatedSecondaryHours.toFixed(1)}h budget.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Search & Quick Controls: Secondary */}
-                      <div className="space-y-2 shrink-0">
-                        <div className="relative">
-                          <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
-                          <input
-                            type="text"
-                            placeholder="Search chapters in Secondary Subject..."
-                            value={secondarySearch}
-                            onChange={(e) => setSecondarySearch(e.target.value)}
-                            className="w-full bg-slate-900/90 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-colors"
-                          />
-                        </div>
-
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1">
-                          {/* Filter Pills */}
-                          <div className="flex items-center gap-1.5 text-[10px] font-bold">
-                            <span className="text-slate-400 mr-1">Filter:</span>
-                            {(['all', 'pending', 'catA'] as const).map(f => (
-                              <button
-                                key={f}
-                                type="button"
-                                onClick={() => setSecondaryFilter(f)}
-                                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                                  secondaryFilter === f
-                                    ? 'bg-amber-600 text-slate-950 font-black'
-                                    : 'bg-slate-900 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                                }`}
-                              >
-                                {f === 'all' ? 'All' : f === 'pending' ? 'Pending' : 'Category A'}
-                              </button>
-                            ))}
-                          </div>
-
-                          {/* Selection Helpers */}
-                          <div className="flex items-center gap-2 text-[10px] font-bold">
-                            <button
-                              type="button"
-                              onClick={() => sSubObj && setSelectedSecondaryChapterIds(sSubObj.topics.map(t => t.id))}
-                              className="text-amber-400 hover:text-amber-300 hover:underline cursor-pointer"
-                            >
-                              Select All
-                            </button>
-                            <span className="text-slate-700">•</span>
-                            <button
-                              type="button"
-                              onClick={() => sSubObj && setSelectedSecondaryChapterIds(sSubObj.topics.filter(t => !t.completed).map(t => t.id))}
-                              className="text-amber-300 hover:text-amber-200 hover:underline cursor-pointer"
-                            >
-                              Select Pending
-                            </button>
-                            <span className="text-slate-700">•</span>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedSecondaryChapterIds([])}
-                              className="text-slate-400 hover:text-slate-300 hover:underline cursor-pointer"
-                            >
-                              Clear
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Chapters Scrolling Area (Secondary) */}
-                      <div className="flex-1 overflow-y-auto max-h-64 sm:max-h-80 pr-1 space-y-1.5 scrollbar-thin">
-                        {secondaryTopicsToDisplay.length === 0 ? (
-                          <div className="text-center py-10 text-xs text-slate-500">
-                            No chapters found matching search filters. 🔍
-                          </div>
-                        ) : (
-                          secondaryTopicsToDisplay.map((topic) => {
-                            const isSelected = selectedSecondaryChapterIds.includes(topic.id);
-                            return (
-                              <div
-                                key={topic.id}
-                                onClick={() => toggleSecondaryTopic(topic.id)}
-                                className={`flex items-center justify-between p-3 rounded-xl border text-xs cursor-pointer transition-all ${
-                                  isSelected
-                                    ? 'bg-amber-950/20 border-amber-500/50 text-amber-100 font-semibold shadow-md shadow-amber-500/5'
-                                    : 'bg-slate-900/30 border-slate-800/80 text-slate-400 hover:border-slate-700 hover:bg-slate-900/50'
-                                } hover:scale-[1.01]`}
-                              >
-                                <div className="flex items-center gap-3 overflow-hidden pr-2">
-                                  <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all ${
-                                    isSelected ? 'bg-amber-500 border-amber-400 text-slate-950 font-bold' : 'border-slate-600'
-                                  }`}>
-                                    {isSelected && <CheckCircle2 className="w-3 h-3 stroke-[3]" />}
-                                  </div>
-                                  <span className="truncate text-slate-200 text-[11px] sm:text-xs">{topic.title}</span>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  {topic.category && (
-                                    <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-amber-900/50 text-amber-300 font-black border border-amber-500/20">
-                                      {topic.category}
-                                    </span>
-                                  )}
-                                  {topic.completed ? (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 font-bold border border-emerald-500/20 shrink-0">
-                                      Done ✅
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/40 text-amber-300 font-bold border border-amber-500/20 shrink-0">
-                                      Pending
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    </>
-                  )}
-
-                </div>
-
-              </div>
-              </div>
-            </main>
-
-            {/* Live Slot-Count & Sleep Reality Preview Badge */}
-            <div className="px-6 sm:px-8 pt-2 pb-0 flex flex-col gap-2">
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  id="toggle-projection-btn"
-                  onClick={() => setShowProjection(!showProjection)}
-                  className={`px-4 py-2 text-xs font-bold font-mono uppercase tracking-wider rounded-xl transition-all border flex items-center gap-2 cursor-pointer shadow-md ${
-                    showProjection
-                      ? 'bg-cyan-950/80 border-cyan-400 text-cyan-200'
-                      : 'bg-slate-900/60 border-slate-700/60 text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                  }`}
-                >
-                  {showProjection ? '📊 Hide Real-Time Projection' : '📊 Show Real-Time Projection'}
-                </button>
-              </div>
-
-              {showProjection && (
-                <div className="bg-[#0A121E]/90 border border-cyan-500/40 p-4 rounded-xl flex flex-col gap-2 shadow-[0_0_20px_rgba(6,182,212,0.15)] animate-in fade-in duration-300">
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-black text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
-                        📊 Real-Time Schedule Projection
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/30">
-                        Mode: {schedulingMode}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-3 text-xs font-mono font-bold text-slate-300">
-                      <span>Slots: <strong className="text-amber-300">{previewMath.totalSlotsNeeded}</strong> ({previewMath.totalBreaksNeeded} breaks)</span>
-                      <span>•</span>
-                      <span>Span: <strong className="text-indigo-300">{previewMath.spanHours}h {previewMath.spanMins}m</strong></span>
-                      <span>•</span>
-                      <span>Ends At: <strong className="text-emerald-300">{previewMath.projectedEndTimeStr}</strong></span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-3 pt-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400 font-semibold">Remaining Sleep & Free Window:</span>
-                      <span className={`text-xs font-mono font-black px-2.5 py-1 rounded-lg border ${
-                        previewMath.isHighBurnoutRisk
-                          ? 'bg-red-950/80 border-red-500/80 text-red-300 shadow-[0_0_12px_rgba(239,68,68,0.3)] animate-pulse'
-                          : 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
-                      }`}>
-                        🌙 {previewMath.remainingSleepAndFreeHours} Hours
-                      </span>
-                    </div>
-
-                    {previewMath.isHighBurnoutRisk && (
-                      <div className="text-[11px] text-red-300 font-bold bg-red-950/50 border border-red-500/40 px-3 py-1 rounded-lg flex items-center gap-1.5">
-                        ⚠️ Crimson Alert: High Burnout Risk! Sleep window is below 6.0 hours.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
+              </main>
             {/* Layer 3: Sticky Action Footer */}
-            <footer className="px-6 sm:px-8 py-4 border-t border-slate-800/60 backdrop-blur-md shrink-0 flex flex-wrap items-center justify-between gap-4 sticky bottom-0 z-20 bg-[#0B1528] pb-[calc(1rem+env(safe-area-inset-bottom,0px))] md:pb-4">
-              {/* Custom instructions text box */}
-              <div className="w-full sm:flex-1 relative">
-                <textarea
-                  placeholder="✍️ Any specific instructions or goals for the AI? (e.g. Focus deeply on tricky MCQs, take shorter breaks, assign 1 hour to revision only, etc.)"
-                  value={customInstructions}
-                  onChange={(e) => setCustomInstructions(e.target.value)}
-                  rows={2}
-                  className="w-full bg-slate-950/80 border border-slate-700 hover:border-slate-600 rounded-xl px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/60 transition-colors shadow-inner resize-none min-h-[50px]"
-                />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="px-4 py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-colors cursor-pointer border border-slate-700 min-h-[44px] flex items-center justify-center"
-                >
-                  Cancel
-                </button>
-
-                {/* Action Button */}
-                <button
-                  type="button"
-                  onClick={handleGeneratePlan}
-                  disabled={isGenerating}
-                  className="flex-1 sm:flex-initial px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:opacity-95 text-white font-extrabold text-xs sm:text-sm shadow-xl flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50 transition-all shrink-0 active:scale-[0.98] min-h-[44px]"
-                >
-                  <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-                  <span>{isGenerating ? 'Generating Strategy...' : `Generate AI Schedule`}</span>
-                </button>
-              </div>
-            </footer>
-
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* Save Custom Timetable Preset Modal */}
-      {showSavePresetModal && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-          <div className="bg-[#0B1528] border border-cyan-500/50 p-6 rounded-2xl w-full max-w-md shadow-2xl space-y-4 text-slate-100">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-sm font-black text-cyan-300 uppercase tracking-wider">
-                📌 Save Timetable Preset
-              </h3>
+            <footer className="px-6 sm:px-8 py-4 border-t border-slate-800/60 backdrop-blur-md shrink-0 flex items-center justify-end gap-3 sticky bottom-0 z-20 bg-[#0B1528] pb-[calc(1rem+env(safe-area-inset-bottom,0px))] md:pb-4">
               <button
                 type="button"
-                onClick={() => setShowSavePresetModal(false)}
-                className="text-slate-400 hover:text-white text-sm"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-300">Preset Name:</label>
-              <input
-                type="text"
-                placeholder="e.g., Heavy Morning 10h Sprint, Audit Revision Day"
-                value={presetNameInput}
-                onChange={(e) => setPresetNameInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowSavePresetModal(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-colors"
+                onClick={() => setShowModal(false)}
+                className="px-6 py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 font-bold text-sm transition-colors cursor-pointer border border-slate-700"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleSavePreset}
-                disabled={!presetNameInput.trim()}
-                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-black rounded-xl transition-all shadow-lg cursor-pointer min-h-[44px]"
+                onClick={handleGeneratePlan}
+                disabled={isGenerating}
+                className="px-8 py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 hover:opacity-95 text-white font-extrabold text-sm shadow-xl flex items-center gap-2.5 cursor-pointer disabled:opacity-50 transition-all"
               >
-                Save Preset
+                <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                <span>{isGenerating ? 'Generating...' : 'Generate AI Schedule'}</span>
               </button>
-            </div>
+            </footer>
           </div>
         </div>,
         document.body
@@ -3865,12 +2953,31 @@ ${customAiInstruction ? `CRITICAL USER MID-DAY ADVICE TO APPLY TO REMAINING FUTU
         document.body
       )}
 
+      {/* Toast Notification for Excel Import Success */}
+      {importSuccessToast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[10000] bg-emerald-950/95 border-2 border-emerald-400 text-emerald-100 font-bold px-6 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 backdrop-blur-md animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 animate-bounce" />
+          <span className="text-xs sm:text-sm">{importSuccessToast}</span>
+        </div>
+      )}
+
       {/* Weekly Timetable Planner Integration (Requirement 5) */}
       <WeeklyPlannerModal
         isOpen={isWeeklyModalOpen}
         onClose={() => setIsWeeklyModalOpen(false)}
         subjects={subjects}
         isStrictMode={isStrictMode}
+      />
+
+      {/* Custom Excel Timetable Importer (Day / Week / Month) */}
+      <ExcelTimetableImportModal
+        isOpen={isExcelImportModalOpen}
+        onClose={() => setIsExcelImportModalOpen(false)}
+        initialDateStr={selectedDateStr}
+        onSuccessToast={(msg) => {
+          setImportSuccessToast(msg);
+          setTimeout(() => setImportSuccessToast(null), 5000);
+        }}
       />
     </div>
   );

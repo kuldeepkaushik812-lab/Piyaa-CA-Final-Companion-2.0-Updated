@@ -70,6 +70,7 @@ export interface TimetableSlot {
   studiedDurationHours?: number;
   isBacklogSettled?: boolean;
   subTasks?: SlotSubTask[];
+  quickTag?: string;
 }
 
 export interface GeneratedTimetable {

@@ -159,8 +159,8 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
         let finalMins = Math.round(remainingHours * 60);
         const parsed = parseTimeStr(slot.time);
         if (parsed) {
-          const istNowStr = getISTTimeString();
-          let currentMins = parseTimeToMinutes(istNowStr);
+          const istNow = getISTDate();
+          let currentMins = istNow.getHours() * 60 + istNow.getMinutes();
           if (currentMins <= 5 * 60) currentMins += 1440;
           let endMins = parsed.end;
           if (endMins < parsed.start) endMins += 1440;

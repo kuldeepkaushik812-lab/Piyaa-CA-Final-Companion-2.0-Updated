@@ -1,0 +1,390 @@
+  2111	                <div className="p-2.5 rounded-2xl bg-indigo-950/80 border border-indigo-500/40 text-amber-300 shadow-inner">
+  2112	                  <Sparkles className="w-5 h-5 animate-pulse" />
+  2113	                </div>
+  2114	                <div>
+  2115	                  <h3 className="text-base sm:text-lg font-black text-indigo-100 tracking-wide">
+  2116	                    ⚡ CA Final AI Timetable Strategy Generator
+  2117	                  </h3>
+  2118	                  <p className="text-xs text-indigo-300/75 font-medium hidden sm:block">
+  2119	                    Configure your daily target & let Piyaa optimize your day with precision ICAI slotting
+  2120	                  </p>
+  2121	                </div>
+  2122	              </div>
+  2123	
+  2124	              {/* Center Dynamic Context Pill */}
+  2125	              <div className="hidden md:flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/80 border border-indigo-500/30 text-amber-300 font-mono text-xs font-bold shadow-inner">
+  2126	                <Zap className="w-3.5 h-3.5 text-indigo-400" />
+  2127	                <span>Target: {availableHours.toFixed(1)} Hours/Day</span>
+  2128	              </div>
+  2129	
+  2130	              <button
+  2131	                onClick={() => setShowModal(false)}
+  2132	                className="px-4 py-1.5 rounded-lg bg-slate-800/80 hover:bg-red-500/20 hover:text-red-300 border border-slate-700/50 transition-all font-mono text-sm cursor-pointer flex items-center gap-2 text-slate-300"
+  2133	                title="Close Modal (Esc)"
+  2134	              >
+  2135	                <span>✕ Close (ESC)</span>
+  2136	              </button>
+  2137	            </header>
+  2138	
+  2139	            {/* Layer 2: Modal Body Grid Wrapper */}
+  2140	            <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 overflow-y-auto">
+  2141	              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-slate-950/20 p-4 sm:p-6 rounded-3xl border border-white/5">
+  2142	              
+  2143	              {/* Left Column: Settings Panel (col-span-5) */}
+  2144	              <div className="lg:col-span-5 space-y-5 flex flex-col">
+  2145	                
+  2146	                {/* Section Title */}
+  2147	                <div className="text-xs font-black uppercase text-indigo-400 tracking-widest border-b border-indigo-500/10 pb-2">
+  2148	                  1. Study Strategy & Target
+  2149	                </div>
+  2150	
+  2151	                {/* Target Date Input */}
+  2152	                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-1.5 shadow-inner">
+  2153	                  <label className="block text-xs font-extrabold text-indigo-300 uppercase tracking-wider">
+  2154	                    Target Study Date:
+  2155	                  </label>
+  2156	                  <div className="relative">
+  2157	                    <Calendar className="absolute left-3 top-3 w-4 h-4 text-indigo-400" />
+  2158	                    <input
+  2159	                      type="date"
+  2160	                      value={selectedDateStr}
+  2161	                      onChange={(e) => setSelectedDateStr(e.target.value)}
+  2162	                      className="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-xs text-amber-300 font-bold focus:border-indigo-500 focus:outline-none transition-colors"
+  2163	                    />
+  2164	                  </div>
+  2165	                </div>
+  2166	
+  2167	                {/* Group attempt selector */}
+  2168	                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-1.5 shadow-inner">
+  2169	                  <label className="block text-xs font-extrabold text-indigo-300 uppercase tracking-wider">
+  2170	                    Select Group Attempt:
+  2171	                  </label>
+  2172	                  <select
+  2173	                    value={groupOption}
+  2174	                    onChange={(e) => setGroupOption(e.target.value)}
+  2175	                    className="w-full text-slate-200 text-xs font-bold rounded-xl px-3 py-3 focus:border-indigo-500 focus:outline-none bg-slate-900 border border-slate-700/80 cursor-pointer"
+  2176	                  >
+  2177	                    <option value="Both Groups (G1 + G2)">Both Groups (G1 + G2) - 6 Papers</option>
+  2178	                    <option value="Group 1 Only">Group 1 Only (FR, AFM, Audit)</option>
+  2179	                    <option value="Group 2 Only">Group 2 Only (DT, IDT, IBS)</option>
+  2180	                  </select>
+  2181	                </div>
+  2182	
+  2183	                {/* Bi-directional Target Study Slider */}
+  2184	                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-3.5 shadow-inner">
+  2185	                  <div className="flex items-center justify-between">
+  2186	                    <label className="text-xs font-extrabold text-indigo-300 uppercase tracking-wider flex items-center gap-1">
+  2187	                      <Clock className="w-3.5 h-3.5 text-amber-300" />
+  2188	                      Target study hours:
+  2189	                    </label>
+  2190	                    <span className="text-xs font-black text-amber-300 bg-amber-950/80 px-2.5 py-0.5 rounded-full border border-amber-500/40 shadow-sm animate-pulse">
+  2191	                      {availableHours} Hours / Day
+  2192	                    </span>
+  2193	                  </div>
+  2194	                  <input
+  2195	                    type="range"
+  2196	                    min={4}
+  2197	                    max={16}
+  2198	                    step={1}
+  2199	                    value={availableHours}
+  2200	                    onChange={(e) => {
+  2201	                      const nextHrs = Number(e.target.value);
+  2202	                      setAvailableHours(nextHrs);
+  2203	                      setDailyTarget(selectedDateStr, nextHrs);
+  2204	                      if (onUpdateTargetHours) {
+  2205	                        onUpdateTargetHours(nextHrs);
+  2206	                      }
+  2207	                    }}
+  2208	                    className="w-full accent-indigo-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
+  2209	                  />
+  2210	                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+  2211	                    <span>4h (Light)</span>
+  2212	                    <span className="text-indigo-300 font-bold">8h (Optimal)</span>
+  2213	                    <span>16h (Strict Daily Limit)</span>
+  2214	                  </div>
+  2215	                  
+  2216	                  <div className="pt-2.5 border-t border-slate-900 flex items-center justify-between">
+  2217	                    <span className="text-[10px] text-indigo-300/80 font-bold uppercase tracking-wider">Required Pace (Master Progress):</span>
+  2218	                    <span className="text-[10px] font-black font-mono text-cyan-300 bg-cyan-950/60 border border-cyan-500/30 px-2.5 py-0.5 rounded-lg shadow-sm">
+  2219	                      ⚡ {getRequiredDailyHours(subjects).toFixed(1)} Hours / Day
+  2220	                    </span>
+  2221	                  </div>
+  2222	                  {/* Sleep Boundary Guard */}
+  2223	                  {(() => {
+  2224	                    const startMatch = startTimePreference.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+  2225	                    if (startMatch) {
+  2226	                      let hours = parseInt(startMatch[1]);
+  2227	                      const mins = parseInt(startMatch[2]);
+  2228	                      const period = startMatch[3] ? startMatch[3].toUpperCase() : 'AM';
+  2229	                      if (period === 'PM' && hours < 12) hours += 12;
+  2230	                      if (period === 'AM' && hours === 12) hours = 0;
+  2231	
+  2232	                      let totalMins = hours * 60 + mins;
+  2233	                      totalMins += availableHours * 60;
+  2234	                      
+  2235	                      const slotHrs = parseFloat(slotTimePreference.replace(' Hours', '')) || 2;
+  2236	                      const numSlots = Math.ceil(availableHours / slotHrs);
+  2237	                      const shortBreakVal = parseInt(shortBreakDuration.replace(' mins', '')) || 15;
+  2238	                      totalMins += (numSlots > 1 ? (numSlots - 1) * shortBreakVal : 0);
+  2239	
+  2240	                      const lunchVal = lunchDuration === 'N/A' ? 0 : (parseInt(lunchDuration.replace(' mins', '')) || 0);
+  2241	                      const dinnerVal = dinnerDuration === 'N/A' ? 0 : (parseInt(dinnerDuration.replace(' mins', '')) || 0);
+  2242	                      totalMins += lunchVal + dinnerVal;
+  2243	
+  2244	                      if (totalMins > 26 * 60) {
+  2245	                        return (
+  2246	                          <div className="mt-2 bg-amber-950/60 border border-amber-500/40 rounded-lg p-2.5 flex items-start gap-2">
+  2247	                            <span className="text-[10px]">⚠️</span>
+  2248	                            <span className="text-[10px] text-amber-200 font-semibold leading-relaxed">
+  2249	                              Daily cap reached. Scheduled slots may cross 02:00 AM. Consider reducing target hours or starting earlier.
+  2250	                            </span>
+  2251	                          </div>
+  2252	                        );
+  2253	                      }
+  2254	                    }
+  2255	                    return null;
+  2256	                  })()}
+  2257	                </div>
+  2258	
+  2259	                {isMidDayUpdate && (
+  2260	                  <div className="bg-slate-950/50 p-4 rounded-2xl border border-indigo-500/30 space-y-3 shadow-inner">
+  2261	                    <div className="flex items-center gap-2">
+  2262	                      <span className="text-sm">🤖</span>
+  2263	                      <span className="text-xs font-black uppercase text-indigo-300 tracking-wider">
+  2264	                        Ask Custom AI Assistant
+  2265	                      </span>
+  2266	                    </div>
+  2267	                    <p className="text-[10px] text-slate-400 leading-relaxed">
+  2268	                      Type your mid-day study/break adjustments (e.g., "I have a headache, convert my remaining study slots into light theory"). Piyaa will adapt only the uncompleted future slots!
+  2269	                    </p>
+  2270	                    <textarea
+  2271	                      value={customAiInstruction}
+  2272	                      onChange={(e) => setCustomAiInstruction(e.target.value)}
+  2273	                      placeholder="Type your mid-day constraints or instruction here..."
+  2274	                      className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 min-h-[60px] resize-none"
+  2275	                    />
+  2276	                    <button
+  2277	                      type="button"
+  2278	                      onClick={handleGeneratePlan}
+  2279	                      disabled={isGenerating || !customAiInstruction.trim()}
+  2280	                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-white font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all"
+  2281	                    >
+  2282	                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+  2283	                      <span>⚡ Apply AI Advice to Remaining Slots</span>
+  2284	                    </button>
+  2285	                  </div>
+  2286	                )}
+  2287	
+  2288	                {/* AI Plan Timetable Config (Strict User Controls) */}
+  2289	                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80 space-y-4 shadow-inner">
+  2290	                  <div className="flex items-center justify-between border-b border-indigo-500/10 pb-2">
+  2291	                    <span className="text-xs font-black uppercase text-indigo-400 tracking-widest">
+  2292	                      2. AI Routine & Customization Engines
+  2293	                    </span>
+  2294	                  </div>
+  2295	
+  2296	                  {/* Preset Manager Strip */}
+  2297	                  <div className="space-y-2 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+  2298	                    <div className="flex items-center justify-between">
+  2299	                      <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+  2300	                        💾 Custom Timetable Presets ({customTimetablePresets.length})
+  2301	                      </span>
+  2302	                      <button
+  2303	                        type="button"
+  2304	                        onClick={() => setShowSavePresetModal(true)}
+  2305	                        className="px-2.5 py-1 bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-300 font-mono text-[10px] font-bold rounded-lg cursor-pointer transition-all flex items-center gap-1 shadow-sm"
+  2306	                      >
+  2307	                        <span>💾 Save Current Setting as Preset</span>
+  2308	                      </button>
+  2309	                    </div>
+  2310	
+  2311	                    <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+  2312	                      <button
+  2313	                        type="button"
+  2314	                        onClick={() => {
+  2315	                          setStartTimePreference('06:00 AM');
+  2316	                          setSchedulingMode('UNIFORM');
+  2317	                          setSlotTimePreference('2.0 Hours');
+  2318	                          setShortBreakDuration('15 mins');
+  2319	                          setLunchStartTime('01:00 PM');
+  2320	                          setLunchDuration('45 mins');
+  2321	                          setDinnerStartTime('08:30 PM');
+  2322	                          setDinnerDuration('45 mins');
+  2323	                        }}
+  2324	                        className="bg-slate-900/80 border border-slate-700/80 hover:border-cyan-400 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0 flex items-center gap-1.5"
+  2325	                      >
+  2326	                        <span>🌅 Early Bird (06:00 AM)</span>
+  2327	                      </button>
+  2328	                      <button
+  2329	                        type="button"
+  2330	                        onClick={() => {
+  2331	                          setStartTimePreference('09:00 AM');
+  2332	                          setSchedulingMode('UNIFORM');
+  2333	                          setSlotTimePreference('2.5 Hours');
+  2334	                          setShortBreakDuration('20 mins');
+  2335	                          setLunchStartTime('01:30 PM');
+  2336	                          setLunchDuration('60 mins');
+  2337	                          setDinnerStartTime('09:00 PM');
+  2338	                          setDinnerDuration('60 mins');
+  2339	                        }}
+  2340	                        className="bg-slate-900/80 border border-slate-700/80 hover:border-cyan-400 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0 flex items-center gap-1.5"
+  2341	                      >
+  2342	                        <span>🦉 Night Owl (09:00 AM)</span>
+  2343	                      </button>
+  2344	
+  2345	                      {customTimetablePresets.map((preset) => (
+  2346	                        <div
+  2347	                          key={preset.id}
+  2348	                          onClick={() => handleLoadPreset(preset)}
+  2349	                          className="bg-slate-900/80 border border-slate-700/80 hover:border-cyan-400 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0 flex items-center gap-2 group"
+  2350	                        >
+  2351	                          <span className="font-bold text-cyan-300">📌 {preset.name}</span>
+  2352	                          <button
+  2353	                            type="button"
+  2354	                            onClick={(e) => {
+  2355	                              e.stopPropagation();
+  2356	                              deleteTimetablePreset(preset.id);
+  2357	                            }}
+  2358	                            className="text-slate-500 hover:text-red-400 text-xs px-1 rounded transition-colors"
+  2359	                            title="Delete Preset"
+  2360	                          >
+  2361	                            ✕
+  2362	                          </button>
+  2363	                        </div>
+  2364	                      ))}
+  2365	                    </div>
+  2366	                  </div>
+  2367	
+  2368	                  {/* 3-Way Scheduling Mode Switcher */}
+  2369	                  <div className="space-y-1.5">
+  2370	                    <span className="text-[10px] font-extrabold text-indigo-300 uppercase tracking-wider block">
+  2371	                      Scheduling Mode
+  2372	                    </span>
+  2373	                    <div className="grid grid-cols-3 gap-1.5 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
+  2374	                      <button
+  2375	                        type="button"
+  2376	                        onClick={() => setSchedulingMode('UNIFORM')}
+  2377	                        className={`py-2 text-[10px] font-bold font-mono rounded-lg transition-all text-center ${
+  2378	                          schedulingMode === 'UNIFORM'
+  2379	                            ? 'bg-cyan-950/60 border border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] font-black'
+  2380	                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+  2381	                        }`}
+  2382	                      >
+  2383	                        ⚡ Uniform
+  2384	                      </button>
+  2385	
+  2386	                      <button
+  2387	                        type="button"
+  2388	                        onClick={() => setSchedulingMode('VARIABLE')}
+  2389	                        className={`py-2 text-[10px] font-bold font-mono rounded-lg transition-all text-center ${
+  2390	                          schedulingMode === 'VARIABLE'
+  2391	                            ? 'bg-cyan-950/60 border border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] font-black'
+  2392	                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+  2393	                        }`}
+  2394	                      >
+  2395	                        🌅 Variable
+  2396	                      </button>
+  2397	
+  2398	                      <button
+  2399	                        type="button"
+  2400	                        onClick={() => setSchedulingMode('MANUAL')}
+  2401	                        className={`py-2 text-[10px] font-bold font-mono rounded-lg transition-all text-center ${
+  2402	                          schedulingMode === 'MANUAL'
+  2403	                            ? 'bg-cyan-950/60 border border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] font-black'
+  2404	                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+  2405	                        }`}
+  2406	                      >
+  2407	                        🛠️ Manual
+  2408	                      </button>
+  2409	                    </div>
+  2410	                  </div>
+  2411	
+  2412	                  {/* 1st Study Slot Start Time & Last Slot End Time */}
+  2413	                  {schedulingMode !== 'MANUAL' && (
+  2414	                    <div className="grid grid-cols-2 gap-3 animate-in fade-in duration-200">
+  2415	                      <div className="space-y-1.5">
+  2416	                        <span className="text-[10px] font-extrabold text-indigo-300 uppercase block">1st Slot Start Time</span>
+  2417	                        <input
+  2418	                          type="text"
+  2419	                          value={startTimePreference}
+  2420	                          onChange={(e) => setStartTimePreference(e.target.value)}
+  2421	                          placeholder="e.g. 09:00 AM"
+  2422	                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-amber-300 font-mono focus:outline-none focus:border-indigo-500"
+  2423	                        />
+  2424	                        <div className="flex gap-1">
+  2425	                          {['AM', 'PM'].map(p => {
+  2426	                            const isActive = startTimePreference.toUpperCase().includes(p);
+  2427	                            return (
+  2428	                              <button
+  2429	                                key={`start-period-${p}`}
+  2430	                                type="button"
+  2431	                                onClick={() => {
+  2432	                                  const base = startTimePreference.replace(/\s*(AM|PM)/i, '').trim() || '09:00';
+  2433	                                  setStartTimePreference(`${base} ${p}`);
+  2434	                                }}
+  2435	                                className={`flex-1 py-1 text-[9px] font-mono rounded-lg border transition-all ${
+  2436	                                  isActive 
+  2437	                                    ? 'bg-amber-950/40 border-amber-500 text-amber-200' 
+  2438	                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850'
+  2439	                                }`}
+  2440	                              >
+  2441	                                {p}
+  2442	                              </button>
+  2443	                            );
+  2444	                          })}
+  2445	                        </div>
+  2446	                      </div>
+  2447	                      <div className="space-y-1.5">
+  2448	                        <span className="text-[10px] font-extrabold text-indigo-300 uppercase block">Last Slot End Time</span>
+  2449	                        <input
+  2450	                          type="text"
+  2451	                          value={endTimePreference}
+  2452	                          onChange={(e) => setEndTimePreference(e.target.value)}
+  2453	                          placeholder="e.g. 11:00 PM"
+  2454	                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-amber-300 font-mono focus:outline-none focus:border-indigo-500"
+  2455	                        />
+  2456	                        <div className="flex gap-1">
+  2457	                          {['AM', 'PM'].map(p => {
+  2458	                            const isActive = endTimePreference.toUpperCase().includes(p);
+  2459	                            return (
+  2460	                              <button
+  2461	                                key={`end-period-${p}`}
+  2462	                                type="button"
+  2463	                                onClick={() => {
+  2464	                                  const base = endTimePreference.replace(/\s*(AM|PM)/i, '').trim() || '11:00';
+  2465	                                  setEndTimePreference(`${base} ${p}`);
+  2466	                                }}
+  2467	                                className={`flex-1 py-1 text-[9px] font-mono rounded-lg border transition-all ${
+  2468	                                  isActive 
+  2469	                                    ? 'bg-amber-950/40 border-amber-500 text-amber-200' 
+  2470	                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850'
+  2471	                                }`}
+  2472	                              >
+  2473	                                {p}
+  2474	                              </button>
+  2475	                            );
+  2476	                          })}
+  2477	                        </div>
+  2478	                      </div>
+  2479	                    </div>
+  2480	                  )}
+  2481	
+  2482	                  {/* UNIFORM SLOT SIZING */}
+  2483	                  {schedulingMode === 'UNIFORM' && (
+  2484	                    <div className="space-y-1.5 animate-in fade-in duration-200">
+  2485	                      <span className="text-[10px] font-extrabold text-indigo-300 uppercase block">Uniform Study Slot Duration</span>
+  2486	                      <input
+  2487	                        type="text"
+  2488	                        value={slotTimePreference}
+  2489	                        onChange={(e) => setSlotTimePreference(e.target.value)}
+  2490	                        placeholder="e.g. 2.0 Hours"
+  2491	                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:outline-none focus:border-indigo-500"
+  2492	                      />
+  2493	                    </div>
+  2494	                  )}
+  2495	
+  2496	                  {/* VARIABLE DAY-PARTING SLOT SIZING */}
+  2497	                  {schedulingMode === 'VARIABLE' && (
+  2498	                    <div className="space-y-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800 animate-in fade-in duration-200">
+  2499	                      <div className="text-[10px] font-extrabold text-amber-300 uppercase tracking-wider">
+  2500	                        🌅 Variable Day-Parting Block Durations
