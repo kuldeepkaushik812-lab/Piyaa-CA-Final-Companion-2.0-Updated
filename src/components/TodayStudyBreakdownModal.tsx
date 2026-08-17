@@ -21,12 +21,14 @@ import { getISTYMD, getISTTimeString } from '../lib/dateUtils';
 import { parseSlotHours, parseTimeToMinutes, formatMinutesToTimeStr } from '../utils/timeUtils';
 
 interface TodayStudyBreakdownModalProps {
+  studyHoursToday: number;
   isOpen: boolean;
   onClose: () => void;
   onLaunchNextSlot?: () => void;
 }
 
 export const TodayStudyBreakdownModal: React.FC<TodayStudyBreakdownModalProps> = ({
+  studyHoursToday,
   isOpen,
   onClose,
   onLaunchNextSlot
@@ -74,23 +76,6 @@ export const TodayStudyBreakdownModal: React.FC<TodayStudyBreakdownModalProps> =
   }, [studyHistoryLogs, dateStr]);
 
   // Compute total studied hours today
-  const studyHoursToday = useMemo(() => {
-    // Sum from studyHistoryLogs
-    const logTotal = todayHistoryLogs.reduce((acc, log) => acc + (log.durationHours || 0), 0);
-    if (logTotal > 0) return logTotal;
-
-    // Fallback to slot completed durations
-    return todaySlots.reduce((acc, slot) => {
-      if (slot.category !== 'study') return acc;
-      if (slot.studiedDurationHours && slot.studiedDurationHours > 0) {
-        return acc + slot.studiedDurationHours;
-      }
-      if (slot.completed) {
-        return acc + (slot.totalDurationHours || parseSlotHours(slot.time) || 1.5);
-      }
-      return acc;
-    }, 0);
-  }, [todayHistoryLogs, todaySlots]);
 
   // Compute Lapsed / Lost Hours today (slots up to current hour that were not completed / studied)
   const lapsedHoursToday = useMemo(() => {

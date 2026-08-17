@@ -658,7 +658,7 @@ export const useStore = create<GlobalState>()(
           studiedDurationHours: Number(studiedHrs.toFixed(2)),
           progress: 100,
           completed: true,
-          status: 'COMPLETED'
+          status: 'COMPLETED' as const
         };
 
         const displayTopic = newTopicName && newTopicName.trim() ? newTopicName.trim() : `Switched Focus: ${newSubjectName}`;
@@ -889,37 +889,18 @@ export const useStore = create<GlobalState>()(
         set((state) => {
           const id = `history-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
           const timestamp = Date.now();
-          const newLog: StudyHistoryLog = {
+          const newLog = {
             ...entry,
             id,
             timestamp,
-            status: 'COMPLETED'
+            status: 'COMPLETED' as const
           };
-          
-          let newStudyLogs = state.studyLogs.map(l => ({ ...l }));
-          if (entry.durationHours > 0) {
-            const targetDate = entry.dateStr || getISTYMD();
-            const targetSubjectId = entry.subjectId || 'general';
-            const existingLogIndex = newStudyLogs.findIndex(
-              (log) => log.date === targetDate && log.subjectId === targetSubjectId
-            );
-            if (existingLogIndex >= 0) {
-              newStudyLogs[existingLogIndex].hours = Number((newStudyLogs[existingLogIndex].hours + entry.durationHours).toFixed(2));
-            } else {
-              newStudyLogs.push({
-                id: `log-${targetDate}-${targetSubjectId}`,
-                date: targetDate,
-                subjectId: targetSubjectId,
-                hours: entry.durationHours
-              });
-            }
-          }
           
           return {
-            studyHistoryLogs: [newLog, ...(state.studyHistoryLogs || [])],
-            studyLogs: newStudyLogs
+            studyHistoryLogs: [newLog, ...(state.studyHistoryLogs || [])]
           };
         });
+        get().recalculateAllMetrics(entry.dateStr || getISTYMD());
       },
       deleteStudyHistoryLog: (id) => {
         const state = get();
@@ -949,8 +930,6 @@ export const useStore = create<GlobalState>()(
             studyLogs: newStudyLogs
           };
         });
-
-        // Layer 1: Single Source of Truth & Bi-Directional Binding
         get().recalculateAllMetrics(targetDate);
       },
       updateStudyHistoryLogNotes: (id, notes) => {
@@ -961,7 +940,6 @@ export const useStore = create<GlobalState>()(
       clearStudyHistoryLogs: () => {
         set({ studyHistoryLogs: [] });
       },
-
       customTimetablePresets: [],
       addTimetablePreset: (presetData) => {
         const newPreset: TimetablePreset = {

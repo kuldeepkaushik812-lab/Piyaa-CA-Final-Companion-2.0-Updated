@@ -554,7 +554,6 @@ export default function App() {
         if (matchingLog) {
           deleteStudyHistoryLog(matchingLog.id);
         } else {
-          addStudyLog(subjectId, -hours);
         }
       } else {
         // Log completion in study history & audit ledger
@@ -713,7 +712,7 @@ export default function App() {
             subjects={subjects} 
             studyHoursToday={studyHoursToday}
             targetStudyHours={targetStudyHours}
-            onUpdateStudyHours={(delta) => addStudyLog(null, delta)}
+            onUpdateStudyHours={(delta) => logStudyActivity({ dateStr: selectedDateStr, subjectId: "general", subject: "General Study", durationHours: delta, sourceType: "MANUAL", chapterTitle: "Quick Log" })}
             onUpdateTargetHours={(delta) => setTargetStudyHours(prev => Math.max(1, prev + delta))}
             onNavigateToSyllabus={(subjectId) => { setActiveTab("subjects"); setCurrentSubject(subjectId); }}
           />
@@ -810,7 +809,7 @@ export default function App() {
             subjects={subjects} 
             isFullPage={true} 
             onNavigateTab={(tab) => setActiveTab(tab as any)}
-            onUpdateStudyHours={(hours) => addStudyLog(null, hours)}
+            onUpdateStudyHours={(hours) => logStudyActivity({ dateStr: selectedDateStr, subjectId: "general", subject: "General Study", durationHours: hours, sourceType: "MANUAL", chapterTitle: "Quick Log" })}
           />
         )}
         {activeTab === 'study-history' && <StudyHistoryHub />}
@@ -839,7 +838,7 @@ export default function App() {
             setActiveModal(null);
             setActiveTab(tab as any);
           }}
-          onUpdateStudyHours={(hours) => addStudyLog(null, hours)}
+          onUpdateStudyHours={(hours) => logStudyActivity({ dateStr: selectedDateStr, subjectId: "general", subject: "General Study", durationHours: hours, sourceType: "MANUAL", chapterTitle: "Quick Log" })}
         />
       )}
 

@@ -373,7 +373,6 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
 
   // Quick Action Handler to log hours directly
   const handleQuickLogHours = (subjectId: string, hours: number) => {
-    addStudyLog(subjectId, hours);
     const subj = subjects.find(s => s.id === subjectId);
     logStudyActivity({
       dateStr: getISTYMD(),

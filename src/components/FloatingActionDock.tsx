@@ -199,7 +199,6 @@ export function FloatingActionDock() {
     if (logHours <= 0) return;
 
     const todayStr = getISTYMD();
-    addStudyLog(selectedSubjectCode, logHours, todayStr);
     logStudyActivity({
       dateStr: todayStr,
       subjectId: selectedSubjectCode,

@@ -172,12 +172,10 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
 
     if (oldSlot.completed && oldSlot.category !== 'break') {
       const oldSubjId = getSubjectIdFromName(oldSlot.subject);
-      addStudyLog(oldSubjId, -parseSlotHours(oldSlot.time), selectedDateStr);
     }
 
     if (newSlot.completed && newSlot.category !== 'break') {
       const newSubjId = getSubjectIdFromName(newSlot.subject);
-      addStudyLog(newSubjId, parseSlotHours(newSlot.time), selectedDateStr);
     }
 
     const updated = selectedDateSchedule.map(s => s.id === slotId ? newSlot : s);
@@ -317,7 +315,6 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
             if (matchingLog) {
               deleteStudyHistoryLog(matchingLog.id);
             } else {
-              addStudyLog(subjectId, -slotHrs, selectedDateStr);
             }
           } else {
             // Logging check in history

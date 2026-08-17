@@ -1,0 +1,2 @@
+sed -i 's/onUpdateStudyHours={(delta) => addStudyLog(null, delta)}/onUpdateStudyHours={(delta) => logStudyActivity({ dateStr: selectedDateStr, subjectId: "general", subject: "General Study", durationHours: delta, sourceType: "MANUAL", chapterTitle: "Quick Log" })}/g' src/App.tsx
+sed -i 's/onUpdateStudyHours={(hours) => addStudyLog(null, hours)}/onUpdateStudyHours={(hours) => logStudyActivity({ dateStr: selectedDateStr, subjectId: "general", subject: "General Study", durationHours: hours, sourceType: "MANUAL", chapterTitle: "Quick Log" })}/g' src/App.tsx

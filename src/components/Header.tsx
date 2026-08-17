@@ -1808,7 +1808,7 @@ export const Header: React.FC<HeaderProps> = ({
       )}
 
       {/* Today's Granular Hour-by-Hour Breakdown Modal */}
-      <TodayStudyBreakdownModal
+      <TodayStudyBreakdownModal studyHoursToday={studyHoursToday}
         isOpen={isTodayModalOpen}
         onClose={() => setIsTodayModalOpen(false)}
         onLaunchNextSlot={() => {
