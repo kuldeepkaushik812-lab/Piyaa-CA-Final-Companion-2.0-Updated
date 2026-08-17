@@ -297,6 +297,12 @@ export default function App() {
         
         // Revert invalid completion states to pending if interaction timestamps are missing
 
+        let nextCompleted = t.completed;
+        if (t.completed && !t.completedAt) {
+          nextCompleted = false;
+          topicMutated = true;
+        }
+
         let nextRev1 = t.rev1;
         if (t.rev1 && !t.rev1At) {
           nextRev1 = false;
@@ -778,6 +784,7 @@ export default function App() {
           <div className="max-w-7xl mx-auto space-y-6 animate-fadeIn">
             <StudyBuddyHub currentUserStats={{
               hoursLoggedToday: studyHoursToday,
+              firstReadPercent: totalChapters > 0 ? Math.round((subjects.reduce((acc, s) => acc + s.topics.filter(t => t.completed).length, 0) / totalChapters) * 100) : 0,
               rev1Percent: totalChapters > 0 ? Math.round((subjects.reduce((acc, s) => acc + s.topics.filter(t => t.rev1).length, 0) / totalChapters) * 100) : 0,
               streakDays: Math.max(0, ...Object.values(useStore.getState().subjectStreaks).map(s => s || 0)),
             }} />

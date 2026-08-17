@@ -1,0 +1,2 @@
+sed -i 's/strokeDashoffset={94.25 - (94.25 \* Math.min(100, (studyHoursToday \/ (targetStudyHours || 1)) \* 100)}/strokeDashoffset={94.25 - (94.25 \* Math.min(100, (studyHoursToday \/ (targetStudyHours || 1)) \* 100) \/ 100)}/g' src/components/Header.tsx
+sed -i 's/strokeDashoffset={94.25 - (94.25 \* Math.min(100, completionPercent)}/strokeDashoffset={94.25 - (94.25 \* Math.min(100, completionPercent) \/ 100)}/g' src/components/Header.tsx

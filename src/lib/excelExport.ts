@@ -240,7 +240,7 @@ export async function exportTimetableDashboardToExcel(
     row.getCell(3).value = slotType;
     row.getCell(4).value = slot.activity;
     row.getCell(5).value = duration;
-    row.getCell(6).value = slot.rev1 ? '✅ Completed' : '⏳ Pending';
+    row.getCell(6).value = slot.completed ? '✅ Completed' : '⏳ Pending';
     row.getCell(7).value = slot.category ? slot.category.toUpperCase() : 'STANDARD';
 
     // Alignment

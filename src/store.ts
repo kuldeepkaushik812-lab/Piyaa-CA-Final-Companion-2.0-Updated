@@ -191,7 +191,7 @@ export const useStore = create<GlobalState>()(
               const newProgress = Math.min(100, (slot.progress || 0) + addedProgress);
               
               let newStatus = slot.status;
-              let isCompleted = slot.rev1;
+              let isCompleted = slot.completed;
               if (currentStudied >= totalSlotHours) {
                 newStatus = 'COMPLETED';
                 isCompleted = true;
@@ -454,7 +454,7 @@ export const useStore = create<GlobalState>()(
               const studied = slot.studiedDurationHours || ((slot.progress || 0) * totalSlotHours / 100) || 0;
               
               let counted = 0;
-              if (slot.status === 'COMPLETED' || slot.rev1) {
+              if (slot.status === 'COMPLETED' || slot.completed) {
                 counted = totalSlotHours;
               } else if (slot.status === 'PARTIALLY_COMPLETED' || slot.status === 'IN_PROGRESS') {
                 counted = studied;
@@ -766,11 +766,11 @@ export const useStore = create<GlobalState>()(
           slots.forEach(slot => {
             if (slot.category !== 'break' && slot.category !== 'na' && slot.status !== 'NA' && !slot.isBacklogSettled) {
               const total = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.rev1 ? total : 0);
+              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.completed ? total : 0);
               
               if (slot.status === 'FAILED' || slot.status === 'PARTIALLY_COMPLETED') {
                 totalLapsed += Math.max(0, total - studied);
-              } else if (!slot.rev1 && slot.status === 'PENDING') {
+              } else if (!slot.completed && slot.status === 'PENDING') {
                 const today = getISTYMD();
                 if (dateStr < today) {
                   totalLapsed += Math.max(0, total - studied);
@@ -794,14 +794,14 @@ export const useStore = create<GlobalState>()(
           slots.forEach(slot => {
             if (slot.category !== 'break' && slot.category !== 'na' && slot.status !== 'NA' && !slot.isBacklogSettled) {
               const total = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.rev1 ? total : 0);
+              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.completed ? total : 0);
               
               let debt = 0;
               let isDebt = false;
               if (slot.status === 'FAILED' || slot.status === 'PARTIALLY_COMPLETED') {
                 debt = Math.max(0, total - studied);
                 if (debt > 0) isDebt = true;
-              } else if (!slot.rev1 && slot.status === 'PENDING') {
+              } else if (!slot.completed && slot.status === 'PENDING') {
                 const today = getISTYMD();
                 if (dateStr < today) {
                   debt = Math.max(0, total - studied);
@@ -841,12 +841,12 @@ export const useStore = create<GlobalState>()(
             const updatedSlots = slots.map(slot => {
               if (slot.category !== 'break' && slot.category !== 'na' && slot.status !== 'NA' && !slot.isBacklogSettled) {
                 const total = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-                const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.rev1 ? total : 0);
+                const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.completed ? total : 0);
                 
                 let isLapsed = false;
                 if (slot.status === 'FAILED' || slot.status === 'PARTIALLY_COMPLETED') {
                   isLapsed = true;
-                } else if (!slot.rev1 && slot.status === 'PENDING') {
+                } else if (!slot.completed && slot.status === 'PENDING') {
                   if (dateStr < today) {
                     isLapsed = true;
                   }
@@ -868,7 +868,7 @@ export const useStore = create<GlobalState>()(
           const updatedTodaySchedule = todaySchedule.map(slot => {
             if (slot.category !== 'break' && slot.category !== 'na' && slot.status !== 'NA' && !slot.isBacklogSettled) {
               const total = slot.totalDurationHours || parseSlotHours(slot.time) || 1.5;
-              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.rev1 ? total : 0);
+              const studied = slot.studiedDurationHours || ((slot.progress || 0) * total / 100) || (slot.completed ? total : 0);
               
               if (slot.status === 'FAILED' || slot.status === 'PARTIALLY_COMPLETED') {
                 return { ...slot, isBacklogSettled: true };

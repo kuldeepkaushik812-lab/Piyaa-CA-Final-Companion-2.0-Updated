@@ -11,7 +11,7 @@ import {
 import { Activity } from 'lucide-react';
 import { StudyHistoryLog } from '../types';
 
-export const FocusEfficiencyChart = ({ sessions }: { sessions: StudyHistoryLog[] }) => {
+export const FocusEfficiencyChart = ({ sessions }: { sessions: any[] }) => {
   // Group sessions by hour to show activity throughout the day
   const hourlyData = Array.from({ length: 24 }).map((_, i) => ({
     hour: `${i.toString().padStart(2, '0')}:00`,
@@ -22,7 +22,7 @@ export const FocusEfficiencyChart = ({ sessions }: { sessions: StudyHistoryLog[]
   sessions.forEach(session => {
     const date = new Date(session.timestamp);
     const hourIndex = date.getHours();
-    hourlyData[hourIndex].duration += session.durationHours;
+    hourlyData[hourIndex].duration += session.durationHours || (session.effectiveMs / 3600000) || 0;
     hourlyData[hourIndex].count += 1;
   });
 

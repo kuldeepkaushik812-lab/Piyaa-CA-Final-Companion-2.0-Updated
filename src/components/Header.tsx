@@ -446,15 +446,15 @@ export const Header: React.FC<HeaderProps> = ({
               {/* Daily Progress Quick Trigger */}
               <button
                 onClick={() => setIsTodayModalOpen(true)}
-                className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl hover:bg-indigo-500/20 text-slate-100 transition-all cursor-pointer text-xs font-semibold active:scale-95"
+                className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl hover:bg-indigo-500/20 text-slate-100 transition-all cursor-pointer text-xs font-semibold active:scale-95 whitespace-nowrap"
                 title="Click for Today's Detailed Study Microscope 🔍"
               >
                 <div className="relative w-5 h-5 flex items-center justify-center shrink-0">
                   <svg className="w-5 h-5 -rotate-90 transform" viewBox="0 0 36 36">
                     <circle cx="18" cy="18" r="15" fill="none" className="stroke-white/10" strokeWidth="3.5" />
-                    <circle cx="18" cy="18" r="15" fill="none" className="stroke-indigo-400 transition-all duration-1000" strokeWidth="3.5" strokeDasharray="100" strokeDashoffset={100 - Math.min(100, (studyHoursToday / (targetStudyHours || 1)) * 100)} strokeLinecap="round" />
+                    <circle cx="18" cy="18" r="15" fill="none" className="stroke-indigo-400 transition-all duration-1000" strokeWidth="3.5" strokeDasharray="94.25" strokeDashoffset={94.25 - (94.25 * Math.min(100, (studyHoursToday / (targetStudyHours || 1)) * 100) / 100)} strokeLinecap="round" />
                   </svg>
-                  <span className="absolute text-[8px] font-mono font-bold text-indigo-300">{Math.round(Math.min(100, (studyHoursToday / (targetStudyHours || 1)) * 100))}%</span>
+                  <span className="absolute text-[7px] font-mono font-bold text-indigo-300 tracking-tighter">{Math.round(Math.min(100, (studyHoursToday / (targetStudyHours || 1)) * 100))}%</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-slate-400 uppercase font-bold hidden sm:inline">Today</span>
@@ -467,15 +467,15 @@ export const Header: React.FC<HeaderProps> = ({
               {/* Overall Syllabus Audit Trigger */}
               <button
                 onClick={() => setIsOverallModalOpen(true)}
-                className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl hover:bg-sky-500/20 text-slate-100 transition-all cursor-pointer text-xs font-semibold active:scale-95"
+                className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl hover:bg-sky-500/20 text-slate-100 transition-all cursor-pointer text-xs font-semibold active:scale-95 whitespace-nowrap"
                 title="Click for Overall CA Final Syllabus Audit 📊"
               >
                 <div className="relative w-5 h-5 flex items-center justify-center shrink-0">
                   <svg className="w-5 h-5 -rotate-90 transform" viewBox="0 0 36 36">
                     <circle cx="18" cy="18" r="15" fill="none" className="stroke-white/10" strokeWidth="3.5" />
-                    <circle cx="18" cy="18" r="15" fill="none" className="stroke-sky-400 transition-all duration-1000" strokeWidth="3.5" strokeDasharray="100" strokeDashoffset={100 - Math.min(100, completionPercent)} strokeLinecap="round" />
+                    <circle cx="18" cy="18" r="15" fill="none" className="stroke-sky-400 transition-all duration-1000" strokeWidth="3.5" strokeDasharray="94.25" strokeDashoffset={94.25 - (94.25 * Math.min(100, completionPercent) / 100)} strokeLinecap="round" />
                   </svg>
-                  <span className="absolute text-[8px] font-mono font-bold text-sky-400">{completionPercent}%</span>
+                  <span className="absolute text-[7px] font-mono font-bold text-sky-400 tracking-tighter">{completionPercent}%</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-slate-400 uppercase font-bold hidden sm:inline">Overall</span>
