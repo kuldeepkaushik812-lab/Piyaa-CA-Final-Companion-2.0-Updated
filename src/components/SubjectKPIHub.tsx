@@ -14,6 +14,8 @@ import {
   Target,
   Link,
   Clock,
+  X,
+  Sparkles,
 } from "lucide-react";
 
 interface SubjectKPIHubProps {
@@ -39,9 +41,53 @@ export const SubjectKPIHub: React.FC<SubjectKPIHubProps> = ({
 
   const studyLogs = useStore((state) => state.studyLogs);
   const allSubjects = useStore((state) => state.subjects);
+  const logStudyActivity = useStore((state) => state.logStudyActivity);
+  const setDailyTarget = useStore((state) => state.setDailyTarget);
   const todayDateStr = getISTYMD();
 
   const [trackerView, setTrackerView] = useState<'ALL' | 'G1' | 'G2'>('ALL');
+
+  // Manual Feeding State for Hours & Minutes
+  const [isManualFeedingOpen, setIsManualFeedingOpen] = useState(false);
+  const [feedHours, setFeedHours] = useState<string>('1');
+  const [feedMinutes, setFeedMinutes] = useState<string>('0');
+  const [feedSubjectId, setFeedSubjectId] = useState<string>(subjects[0]?.id || '');
+  const [feedNotes, setFeedNotes] = useState<string>('');
+
+  // Target hours edit mode
+  const [isEditingTarget, setIsEditingTarget] = useState(false);
+  const [customTargetInput, setCustomTargetInput] = useState<string>(String(targetStudyHours));
+
+  const handleManualFeedSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const h = parseFloat(feedHours) || 0;
+    const m = parseFloat(feedMinutes) || 0;
+    const totalHours = Number((h + (m / 60)).toFixed(2));
+    if (totalHours <= 0) return;
+
+    const subj = subjects.find(s => s.id === feedSubjectId);
+    logStudyActivity({
+      dateStr: todayDateStr,
+      subjectId: feedSubjectId || 'general',
+      subject: subj?.name || 'General Study',
+      durationHours: totalHours,
+      sourceType: 'MANUAL',
+      notes: feedNotes || 'Manual Feed via KPI Hub'
+    });
+
+    setIsManualFeedingOpen(false);
+    setFeedHours('1');
+    setFeedMinutes('0');
+    setFeedNotes('');
+  };
+
+  const handleSaveCustomTarget = () => {
+    const val = parseFloat(customTargetInput);
+    if (!isNaN(val) && val > 0) {
+      setDailyTarget(todayDateStr, val);
+    }
+    setIsEditingTarget(false);
+  };
 
   const g1Subjects = useMemo(() => allSubjects.filter((s) => s.group === 1), [allSubjects]);
   const g2Subjects = useMemo(() => allSubjects.filter((s) => s.group === 2), [allSubjects]);
@@ -286,51 +332,180 @@ export const SubjectKPIHub: React.FC<SubjectKPIHubProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="flex flex-col gap-4">
               {/* Actual Study Hours */}
-              <div className="flex items-center justify-between bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">
-                <span className="text-xs font-bold text-slate-300">
-                  {trackerView === 'ALL' ? 'Total Studied' : trackerView === 'G1' ? 'G1 Studied' : 'G2 Studied'}
-                </span>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => onUpdateStudyHours(-0.5)}
-                    className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-teal-400 hover:bg-slate-700 cursor-pointer"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <span className="text-lg font-black text-white w-12 text-center">
-                    {(trackerView === 'ALL' ? studyHoursToday : trackerView === 'G1' ? g1Hours : g2Hours).toFixed(1)}h
+              <div className="bg-slate-900/50 p-3.5 rounded-xl border border-slate-700/50 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300">
+                    {trackerView === 'ALL' ? 'Total Studied' : trackerView === 'G1' ? 'G1 Studied' : 'G2 Studied'}
                   </span>
                   <button
-                    onClick={() => onUpdateStudyHours(0.5)}
-                    className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-teal-400 hover:bg-slate-700 cursor-pointer"
+                    onClick={() => setIsManualFeedingOpen(!isManualFeedingOpen)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 text-[11px] font-bold cursor-pointer transition-all"
                   >
-                    <ChevronRight className="w-4 h-4" />
+                    <Clock className="w-3 h-3 text-teal-400" />
+                    <span>{isManualFeedingOpen ? 'Close Feed' : 'Feed Hrs & Min'}</span>
                   </button>
                 </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => onUpdateStudyHours(-0.5)}
+                      className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-teal-400 hover:bg-slate-700 cursor-pointer"
+                      title="-30 min"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-lg font-black text-white w-14 text-center font-mono">
+                      {(trackerView === 'ALL' ? studyHoursToday : trackerView === 'G1' ? g1Hours : g2Hours).toFixed(1)}h
+                    </span>
+                    <button
+                      onClick={() => onUpdateStudyHours(0.5)}
+                      className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-teal-400 hover:bg-slate-700 cursor-pointer"
+                      title="+30 min"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    {Math.floor((trackerView === 'ALL' ? studyHoursToday : trackerView === 'G1' ? g1Hours : g2Hours))}h {Math.round(((trackerView === 'ALL' ? studyHoursToday : trackerView === 'G1' ? g1Hours : g2Hours) % 1) * 60)}m
+                  </span>
+                </div>
+
+                {/* Manual Feeding Expandable Drawer */}
+                {isManualFeedingOpen && (
+                  <form onSubmit={handleManualFeedSubmit} className="pt-2 border-t border-slate-700/60 space-y-2.5 animate-fadeIn">
+                    <div className="text-[11px] text-teal-300 font-bold flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" />
+                      <span>Feed Manual Study Time:</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-slate-300 font-bold mb-0.5">Hours (Hrs)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="24"
+                          step="1"
+                          value={feedHours}
+                          onChange={(e) => setFeedHours(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white font-mono font-bold focus:border-teal-400 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-300 font-bold mb-0.5">Minutes (Min)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="59"
+                          step="5"
+                          value={feedMinutes}
+                          onChange={(e) => setFeedMinutes(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white font-mono font-bold focus:border-teal-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-slate-300 font-bold mb-0.5">Subject</label>
+                        <select
+                          value={feedSubjectId}
+                          onChange={(e) => setFeedSubjectId(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white font-bold focus:border-teal-400 focus:outline-none"
+                        >
+                          {subjects.map(s => (
+                            <option key={s.id} value={s.id}>{s.code}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-300 font-bold mb-0.5">Note</label>
+                        <input
+                          type="text"
+                          value={feedNotes}
+                          onChange={(e) => setFeedNotes(e.target.value)}
+                          placeholder="e.g. Chapter Revision"
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white focus:border-teal-400 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[10px] text-teal-300 font-mono">
+                        +{feedHours || 0}h {feedMinutes || 0}m ({((parseFloat(feedHours) || 0) + (parseFloat(feedMinutes) || 0) / 60).toFixed(2)} hrs)
+                      </span>
+                      <button
+                        type="submit"
+                        disabled={((parseFloat(feedHours) || 0) + (parseFloat(feedMinutes) || 0) / 60) <= 0}
+                        className="px-3 py-1 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-lg disabled:opacity-50 cursor-pointer"
+                      >
+                        Save Data
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
 
               {/* Target Study Hours */}
-              <div className="flex items-center justify-between bg-slate-900/50 p-3 rounded-xl border border-slate-700/50">
-                <span className="text-xs font-bold text-slate-300">
-                  {trackerView === 'ALL' ? 'Total Target' : trackerView === 'G1' ? 'G1 Target' : 'G2 Target'}
-                </span>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => onUpdateTargetHours(-1)}
-                    className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-amber-400 hover:bg-slate-700 cursor-pointer"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <span className="text-lg font-black text-amber-300 w-12 text-center">
-                    {(trackerView === 'ALL' ? targetStudyHours : targetStudyHours / 2)}h
+              <div className="bg-slate-900/50 p-3.5 rounded-xl border border-slate-700/50 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300">
+                    {trackerView === 'ALL' ? 'Total Target' : trackerView === 'G1' ? 'G1 Target' : 'G2 Target'}
                   </span>
                   <button
-                    onClick={() => onUpdateTargetHours(1)}
-                    className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-amber-400 hover:bg-slate-700 cursor-pointer"
+                    onClick={() => {
+                      if (!isEditingTarget) {
+                        setCustomTargetInput(String(targetStudyHours));
+                      }
+                      setIsEditingTarget(!isEditingTarget);
+                    }}
+                    className="text-[11px] font-bold text-amber-400 hover:text-amber-300 cursor-pointer"
                   >
-                    <ChevronRight className="w-4 h-4" />
+                    {isEditingTarget ? 'Cancel' : 'Edit Target'}
                   </button>
                 </div>
+
+                {isEditingTarget ? (
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="number"
+                      min="1"
+                      max="24"
+                      step="0.5"
+                      value={customTargetInput}
+                      onChange={(e) => setCustomTargetInput(e.target.value)}
+                      className="w-24 bg-slate-950 border border-amber-500/40 rounded-lg px-2.5 py-1 text-xs text-amber-300 font-mono font-bold focus:outline-none"
+                    />
+                    <button
+                      onClick={handleSaveCustomTarget}
+                      className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg cursor-pointer"
+                    >
+                      Set Target
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => onUpdateTargetHours(-1)}
+                        className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-amber-400 hover:bg-slate-700 cursor-pointer"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <span className="text-lg font-black text-amber-300 w-12 text-center font-mono">
+                        {(trackerView === 'ALL' ? targetStudyHours : targetStudyHours / 2)}h
+                      </span>
+                      <button
+                        onClick={() => onUpdateTargetHours(1)}
+                        className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-amber-400 hover:bg-slate-700 cursor-pointer"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

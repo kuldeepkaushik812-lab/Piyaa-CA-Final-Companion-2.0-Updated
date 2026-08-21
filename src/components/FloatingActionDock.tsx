@@ -167,9 +167,11 @@ export function FloatingActionDock() {
 
   // Quick Log State
   const [selectedSubjectCode, setSelectedSubjectCode] = useState(subjects[0]?.code || 'AFM');
-  const [logHours, setLogHours] = useState<number>(1);
+  const [logHours, setLogHours] = useState<number | string>(1);
+  const [logMinutes, setLogMinutes] = useState<number | string>(0);
   const [logNotes, setLogNotes] = useState('');
   const [logSuccessMessage, setLogSuccessMessage] = useState(false);
+  const [loggedDurationText, setLoggedDurationText] = useState('');
 
   const soundMenuRef = useRef<HTMLDivElement>(null);
 
@@ -196,23 +198,29 @@ export function FloatingActionDock() {
 
   const handleQuickLogSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (logHours <= 0) return;
+    const h = parseFloat(String(logHours)) || 0;
+    const m = parseFloat(String(logMinutes)) || 0;
+    const totalHours = Number((h + (m / 60)).toFixed(2));
+    if (totalHours <= 0) return;
 
     const todayStr = getISTYMD();
     logStudyActivity({
       dateStr: todayStr,
       subjectId: selectedSubjectCode,
       subject: selectedSubjectCode,
-      durationHours: logHours,
+      durationHours: totalHours,
       sourceType: 'MANUAL',
-      notes: logNotes || 'Quick log via Floating Dock'
+      notes: logNotes || 'Manual log via Floating Dock'
     });
 
+    setLoggedDurationText(`${h}h ${m}m (${totalHours} hrs)`);
     setLogSuccessMessage(true);
     setTimeout(() => {
       setLogSuccessMessage(false);
       setShowQuickLogModal(false);
       setLogNotes('');
+      setLogHours(1);
+      setLogMinutes(0);
     }, 1200);
   };
 
@@ -375,7 +383,7 @@ export function FloatingActionDock() {
             {logSuccessMessage ? (
               <div className="p-4 rounded-2xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-center font-bold text-sm flex items-center justify-center gap-2 animate-in zoom-in-95">
                 <Check className="w-5 h-5 text-emerald-400" />
-                <span>Successfully logged {logHours}h for {selectedSubjectCode}! 🎉</span>
+                <span>Successfully logged {loggedDurationText || `${logHours}h`} for {selectedSubjectCode}! 🎉</span>
               </div>
             ) : (
               <form onSubmit={handleQuickLogSubmit} className="space-y-3.5 pt-1">
@@ -394,24 +402,43 @@ export function FloatingActionDock() {
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-extrabold text-slate-300 mb-1">Hours Spent</label>
-                  <div className="grid grid-cols-4 gap-2">
-                    {[0.5, 1, 1.5, 2, 3, 4].map((h) => (
-                      <button
-                        key={h}
-                        type="button"
-                        onClick={() => setLogHours(h)}
-                        className={`py-2 rounded-xl font-mono font-extrabold text-xs border cursor-pointer transition-all ${
-                          logHours === h
-                            ? 'bg-[#2dd4bf] text-slate-950 border-[#2dd4bf] shadow-[0_0_10px_rgba(45,212,191,0.5)]'
-                            : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        {h}h
-                      </button>
-                    ))}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-extrabold text-slate-300 mb-1">Hours (Hrs)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="24"
+                      step="1"
+                      value={logHours}
+                      onChange={(e) => setLogHours(e.target.value)}
+                      placeholder="0"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-white focus:border-[#2dd4bf] focus:outline-none"
+                      required
+                    />
                   </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-slate-300 mb-1">Minutes (Min)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      step="5"
+                      value={logMinutes}
+                      onChange={(e) => setLogMinutes(e.target.value)}
+                      placeholder="0"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-white focus:border-[#2dd4bf] focus:outline-none"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono">
+                  <span className="text-slate-400">Total Duration:</span>
+                  <span className="text-[#2dd4bf] font-bold">
+                    {logHours || 0}h {logMinutes || 0}m ({((parseFloat(String(logHours)) || 0) + (parseFloat(String(logMinutes)) || 0) / 60).toFixed(2)} hrs)
+                  </span>
                 </div>
 
                 <div>

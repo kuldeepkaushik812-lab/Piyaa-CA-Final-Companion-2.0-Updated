@@ -97,11 +97,11 @@ export const Header: React.FC<HeaderProps> = ({
   }, [schedulesByDate, storeTimetable, storeStudyLogs, selectedDateStr, getTotalHoursForDate]);
 
   const totalSyllabusChapters = useMemo(() => {
-    return subjects.reduce((acc, s) => acc + (s.topics?.length || 0), 0);
+    return subjects.reduce((acc, s) => acc + (s.topics?.length || s.totalChapters || 0), 0);
   }, [subjects]);
 
   const totalCompletedChapters = useMemo(() => {
-    return subjects.reduce((acc, s) => acc + (s.topics?.filter((t) => t.completed).length || 0), 0);
+    return subjects.reduce((acc, s) => acc + (s.topics?.filter((t) => t.completed || t.rev1 || t.rev2 || t.rev3).length || 0), 0);
   }, [subjects]);
 
   const completionPercent = Math.round((totalCompletedChapters / (totalSyllabusChapters || 1)) * 100);

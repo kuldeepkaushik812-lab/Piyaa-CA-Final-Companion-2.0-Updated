@@ -37,15 +37,15 @@ export const CompanionChat: React.FC<CompanionChatProps> = ({
   const clearChatHistory = useStore((state) => state.clearChatHistory);
 
   // Live Preparation Metrics Calculations
-  const totalChapters = subjects.reduce((acc, s) => acc + s.topics.length, 0);
-  const completedChapters = subjects.reduce((acc, s) => acc + s.topics.filter((t) => t.completed).length, 0);
+  const totalChapters = subjects.reduce((acc, s) => acc + (s.topics?.length || 0), 0);
+  const completedChapters = subjects.reduce((acc, s) => acc + (s.topics?.filter((t) => t.completed || t.rev1 || t.rev2 || t.rev3).length || 0), 0);
   const completionPercent = totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
   const activeSubjectObj = subjects.find((s) => s.id === currentSubject) || subjects[0];
   
   // Sorted weak subjects
   const sortedWeakSubjects = [...subjects].sort((a, b) => {
-    const aRatio = a.topics.length > 0 ? a.completedChapters / a.topics.length : 0;
-    const bRatio = b.topics.length > 0 ? b.completedChapters / b.topics.length : 0;
+    const aRatio = (a.topics?.length || 0) > 0 ? (a.completedChapters || 0) / (a.topics?.length || 1) : 0;
+    const bRatio = (b.topics?.length || 0) > 0 ? (b.completedChapters || 0) / (b.topics?.length || 1) : 0;
     return aRatio - bRatio;
   });
 

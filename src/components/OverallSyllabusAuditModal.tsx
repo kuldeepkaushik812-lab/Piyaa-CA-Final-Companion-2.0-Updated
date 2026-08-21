@@ -94,11 +94,11 @@ export const OverallSyllabusAuditModal: React.FC<OverallSyllabusAuditModalProps>
         return cat === abcCategoryFilter;
       });
 
-      const totalCh = abcCategoryFilter === 'ALL' ? (sub.totalChapters || topics.length || 1) : filteredTopics.length;
-      const completedCh = filteredTopics.filter((t) => t.rev1).length;
+      const totalCh = abcCategoryFilter === 'ALL' ? (topics.length || sub.totalChapters || 1) : (filteredTopics.length || 1);
+      const completedCh = filteredTopics.filter((t) => t.completed || t.rev1 || t.rev2 || t.rev3).length;
       const percent = totalCh > 0 ? Math.round((completedCh / totalCh) * 100) : 0;
 
-      const r1Count = filteredTopics.filter((t) => t.rev1).length;
+      const r1Count = filteredTopics.filter((t) => t.rev1 || t.completed).length;
       const r2Count = filteredTopics.filter((t) => t.rev2).length;
       const r3Count = filteredTopics.filter((t) => t.rev3).length;
 
@@ -161,8 +161,8 @@ export const OverallSyllabusAuditModal: React.FC<OverallSyllabusAuditModalProps>
 
     subjects.forEach((s) => {
       (s.topics || []).forEach((t) => {
-        if (t.rev1 && t.rev1At) {
-          const cTime = new Date(t.rev1At).getTime();
+        if ((t.completed || t.rev1 || t.rev2 || t.rev3) && (t.rev1At || t.completedAt || t.rev2At || t.rev3At)) {
+          const cTime = new Date(t.rev1At || t.completedAt || t.rev2At || t.rev3At!).getTime();
           if (cTime >= sevenDaysAgoTime) {
             chaptersCompletedLast7Days += 1;
           }

@@ -118,7 +118,8 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
   // States for selected day detail edits
   const [editingNote, setEditingNote] = useState<string>('');
   const [isSavingNote, setIsSavingNote] = useState(false);
-  const [customLogHours, setCustomLogHours] = useState<string>('');
+  const [customLogHours, setCustomLogHours] = useState<string>('1');
+  const [customLogMinutes, setCustomLogMinutes] = useState<string>('0');
   const [customLogSubject, setCustomLogSubject] = useState<string>('');
   const [isAddingLog, setIsAddingLog] = useState(false);
   const [customTargetHours, setCustomTargetHours] = useState<number>(8);
@@ -372,8 +373,10 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
 
   const handleAddManualLog = (e: React.FormEvent) => {
     e.preventDefault();
-    const hrs = parseFloat(customLogHours);
-    if (isNaN(hrs) || hrs <= 0) return;
+    const h = parseFloat(customLogHours) || 0;
+    const m = parseFloat(customLogMinutes) || 0;
+    const totalHours = Number((h + (m / 60)).toFixed(2));
+    if (totalHours <= 0) return;
     
     const matchSubj = subjects.find(sub => sub.id === customLogSubject);
     const subjName = matchSubj ? `${matchSubj.code}: ${matchSubj.name}` : 'General Manual Study';
@@ -382,12 +385,13 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
       dateStr: selectedDateStr,
       subject: subjName,
       subjectId: customLogSubject || 'general',
-      durationHours: hrs,
+      durationHours: totalHours,
       sourceType: 'MANUAL',
       chapterTitle: 'Manual Study Log Entry'
     });
     
-    setCustomLogHours('');
+    setCustomLogHours('1');
+    setCustomLogMinutes('0');
     setIsAddingLog(false);
   };
 
@@ -720,7 +724,7 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
                 <Clock className="w-4 h-4 text-amber-400" />
                 <span>Add / Record Study Session for {selectedDateStr}</span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-cyan-200 uppercase">Subject</label>
                   <select
@@ -735,19 +739,39 @@ export const CalendarTracker: React.FC<CalendarTrackerProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-cyan-200 uppercase">Hours Spent</label>
+                  <label className="text-[10px] font-bold text-cyan-200 uppercase">Hours (Hrs)</label>
                   <input
                     type="number"
-                    step="0.5"
-                    min="0.5"
-                    max="18"
-                    placeholder="e.g. 2.5"
+                    min="0"
+                    max="24"
+                    step="1"
+                    placeholder="0"
                     value={customLogHours}
                     onChange={(e) => setCustomLogHours(e.target.value)}
-                    className="w-full mt-1 bg-cyan-900/80 border border-cyan-500/40 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                    className="w-full mt-1 bg-cyan-900/80 border border-cyan-500/40 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none"
                     required
                   />
                 </div>
+                <div>
+                  <label className="text-[10px] font-bold text-cyan-200 uppercase">Minutes (Min)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="59"
+                    step="5"
+                    placeholder="0"
+                    value={customLogMinutes}
+                    onChange={(e) => setCustomLogMinutes(e.target.value)}
+                    className="w-full mt-1 bg-cyan-900/80 border border-cyan-500/40 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs font-mono text-cyan-300 px-1">
+                <span>Calculated Duration:</span>
+                <span className="font-bold">
+                  {customLogHours || 0}h {customLogMinutes || 0}m ({((parseFloat(customLogHours) || 0) + (parseFloat(customLogMinutes) || 0) / 60).toFixed(2)} hrs)
+                </span>
               </div>
               <button
                 type="submit"

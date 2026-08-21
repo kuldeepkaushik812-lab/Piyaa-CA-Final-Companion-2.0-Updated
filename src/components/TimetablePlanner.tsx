@@ -1,5 +1,5 @@
 import { getISTDate, createRealDateFromIST, formatDisplayDate, getISTYMD, addDaysToYMD, getISTTimeString } from "../lib/dateUtils";
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {  
   Calendar, Clock, CheckCircle2, Circle, Sparkles, RefreshCw, 
@@ -87,6 +87,7 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
     addStudyLog,
     getDailyTarget,
     setDailyTarget,
+    dailyTargets,
     selectedDateStr,
     setSelectedDateStr,
     clearStudyLogsForDate,
@@ -596,15 +597,20 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
     };
   }, [isAnyTimetableModalOpen, showModal, showApplyRangeModal, editingSlotId, showManualDrawer]);
 
-  // Sync availableHours with daily target or default target hours
+  // Sync availableHours with daily target or default target hours when modal opens
   const currentDailyTarget = getDailyTarget(selectedDateStr);
+  const prevShowModalRef = useRef(false);
 
   useEffect(() => {
-    if (showModal) {
-      const liveRequiredHours = getRequiredDailyHours(subjects);
-      setAvailableHours(currentDailyTarget || liveRequiredHours);
+    // Only initialize when opening the modal
+    if (showModal && !prevShowModalRef.current) {
+      const initialTarget = (dailyTargets && typeof dailyTargets[selectedDateStr] === 'number')
+        ? dailyTargets[selectedDateStr]
+        : (currentDailyTarget || targetStudyHours || 12);
+      setAvailableHours(initialTarget);
     }
-  }, [showModal, currentDailyTarget, subjects]);
+    prevShowModalRef.current = showModal;
+  }, [showModal, selectedDateStr]);
 
   // Listen to open-ai-plan-modal custom event to trigger the AI modal instantly
   useEffect(() => {
@@ -627,35 +633,6 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
   const [secondaryChaptersInput, setSecondaryChaptersInput] = useState<string>('');
   const [isWeeklyModalOpen, setIsWeeklyModalOpen] = useState<boolean>(false);
   const [showProjection, setShowProjection] = useState<boolean>(false);
-
-  // Auto-calculate availableHours based on start and end times
-  useEffect(() => {
-    const parseTime = (timeStr: string) => {
-      const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-      if (!match) return 0;
-      let hours = parseInt(match[1]);
-      const mins = parseInt(match[2]);
-      const period = match[3] ? match[3].toUpperCase() : 'AM';
-      if (period === 'PM' && hours < 12) hours += 12;
-      if (period === 'AM' && hours === 12) hours = 0;
-      return hours * 60 + mins;
-    };
-    const startMins = parseTime(startTimePreference);
-    const endMins = parseTime(endTimePreference);
-    if (startMins > 0 && endMins > 0) {
-      let spanMins = endMins - startMins;
-      if (spanMins < 0) spanMins += 24 * 60; // handle overnight
-      
-      const lunchMins = lunchDuration === 'N/A' ? 0 : parseInt(lunchDuration) || 0;
-      const dinnerMins = dinnerDuration === 'N/A' ? 0 : parseInt(dinnerDuration) || 0;
-      
-      const netMins = Math.max(0, spanMins - lunchMins - dinnerMins);
-      // Roughly assume 10 mins break per hour
-      const netHours = netMins / 60;
-      const estimatedStudyHours = Math.max(1, Math.round((netHours * 0.85) * 2) / 2); // 85% efficiency
-      setAvailableHours(estimatedStudyHours);
-    }
-  }, [startTimePreference, endTimePreference, lunchDuration, dinnerDuration]);
 
   // Live Slot-Count & Sleep Reality Preview Badge Math
   const previewMath = useMemo(() => {
@@ -912,15 +889,24 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
               status: (newStudied > 0 ? 'IN_PROGRESS' : 'PENDING') as SlotStatus
             };
           } else {
-            // Logging check in history - only log remaining hours
-            const currentStudied = s.studiedDurationHours || ((s.progress || 0) * slotHrs / 100);
-            const remainingHours = slotHrs - currentStudied;
-            if (remainingHours > 0.05) {
+            // Logging check in history - only log remaining hours if no prior study was recorded
+            const currentStudied = s.studiedDurationHours || ((s.progress || 0) * slotHrs / 100) || 0;
+            
+            let hoursToLog = 0;
+            let finalStudied = currentStudied;
+            
+            // If they didn't study using the timer, assume they completed the whole slot offline
+            if (currentStudied === 0) {
+              hoursToLog = slotHrs;
+              finalStudied = slotHrs;
+            }
+
+            if (hoursToLog > 0.05) {
               logStudyActivity({
                 dateStr: selectedDateStr,
                 subject: subjName,
                 subjectId,
-                durationHours: Number(remainingHours.toFixed(2)),
+                durationHours: Number(hoursToLog.toFixed(2)),
                 sourceType: 'TIME_TABLE',
                 chapterTitle: s.activity
               });
@@ -929,7 +915,7 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
               ...s, 
               completed: true, 
               progress: 100,
-              studiedDurationHours: slotHrs,
+              studiedDurationHours: finalStudied,
               totalDurationHours: slotHrs,
               status: 'COMPLETED' as SlotStatus,
               isFrozen: true,
@@ -1149,18 +1135,26 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
     if (newSlot.completed && newSlot.category !== 'break' && !oldSlot.completed) {
       const slotHrs = parseSlotHours(newSlot.time);
       const currentStudied = newSlot.studiedDurationHours || ((newSlot.progress || 0) * slotHrs / 100) || 0;
-      const remainingHours = slotHrs - currentStudied;
-      if (remainingHours > 0.05) {
+      
+      let hoursToLog = 0;
+      let finalStudied = currentStudied;
+      
+      if (currentStudied === 0) {
+        hoursToLog = slotHrs;
+        finalStudied = slotHrs;
+      }
+      
+      if (hoursToLog > 0.05) {
         logStudyActivity({
           dateStr: selectedDateStr,
           subject: newSlot.subject,
           subjectId: newSubjId,
-          durationHours: Number(remainingHours.toFixed(2)),
+          durationHours: Number(hoursToLog.toFixed(2)),
           sourceType: 'TIME_TABLE',
           chapterTitle: newSlot.activity
         });
       }
-      newSlot.studiedDurationHours = slotHrs;
+      newSlot.studiedDurationHours = finalStudied;
       newSlot.progress = 100;
     }
 
@@ -1266,21 +1260,16 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
       if (updated[i].completed || updated[i].status === 'COMPLETED' || updated[i].status === 'NA' || updated[i].isFrozen) {
         continue;
       }
-      const parsed = parseTimeStr(updated[i].time);
-      if (parsed) {
-        const { start, end } = parsed;
-        start.setMinutes(start.getMinutes() + 30);
-        end.setMinutes(end.getMinutes() + 30);
-        
-        const formatTime = (d: Date) => {
-          let hrs = d.getHours();
-          const mins = d.getMinutes().toString().padStart(2, '0');
-          const ampm = hrs >= 12 ? 'PM' : 'AM';
-          hrs = hrs % 12;
-          hrs = hrs ? hrs : 12;
-          return `${hrs.toString().padStart(2, '0')}:${mins} ${ampm}`;
-        };
-        updated[i] = { ...updated[i], time: `${formatTime(start)} - ${formatTime(end)}` };
+      if (updated[i].time && updated[i].time.includes('-')) {
+        const parts = updated[i].time.split('-').map(s => s.trim());
+        if (parts.length === 2) {
+          const startMin = parseTimeToMinutes(parts[0]) + 30;
+          let endMin = parseTimeToMinutes(parts[1]) + 30;
+          updated[i] = { 
+            ...updated[i], 
+            time: `${formatMinutesToTimeStr(startMin)} - ${formatMinutesToTimeStr(endMin)}` 
+          };
+        }
       }
     }
     saveSlots(updated);
@@ -1294,37 +1283,6 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
       setRangeSuccessMsg(null);
       setShowApplyRangeModal(false);
     }, 2000);
-  };
-
-  const parseTimeStr = (timeStr: string): { start: Date, end: Date } | null => {
-    try {
-      const parts = timeStr.split('-');
-      if (parts.length !== 2) return null;
-      
-      const startPart = parts[0].trim();
-      const endPart = parts[1].trim();
-
-      const parseSingle = (tStr: string) => {
-        const match = tStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-        if (!match) return null;
-        let hours = parseInt(match[1]);
-        const mins = parseInt(match[2]);
-        const period = match[3] ? match[3].toUpperCase() : 'AM';
-        if (period === 'PM' && hours < 12) hours += 12;
-        if (period === 'AM' && hours === 12) hours = 0;
-        
-        const istNow = getISTDate();
-        return createRealDateFromIST(istNow.getFullYear(), istNow.getMonth(), istNow.getDate(), hours, mins);
-      };
-
-      const start = parseSingle(startPart);
-      const end = parseSingle(endPart);
-
-      if (start && end) return { start, end };
-      return null;
-    } catch {
-      return null;
-    }
   };
 
   const handleGeneratePlan = async () => {
@@ -1727,14 +1685,15 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
 
       {/* Slots Timeline Grid */}
       <div className={`overflow-x-auto bg-[#0A121E]/60 rounded-xl border border-slate-700/80 shadow-lg ${isPastDate ? "pointer-events-none opacity-80 grayscale-[20%]" : ""}`}>
-        <table className="w-full text-left border-collapse text-xs">
+        <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-slate-800/80 text-slate-300 border-b border-slate-700">
-              {!isPastDate && <th className="px-2.5 py-3 font-semibold w-8 text-center" title="Drag & drop to reschedule">⠿</th>}
-              <th className="px-4 py-3 font-semibold w-1/4">Time</th>
-              <th className="px-4 py-3 font-semibold w-1/4">Subject</th>
-              <th className="px-4 py-3 font-semibold w-1/3">Chapter</th>
-              <th className="px-4 py-3 font-semibold w-auto">Remarks</th>
+            <tr className="bg-slate-800/80 text-slate-200 border-b border-slate-700">
+              {!isPastDate && <th className="px-2.5 py-5 font-bold w-8 text-center text-base" title="Drag & drop to reschedule">⠿</th>}
+              <th className="px-4 py-5 font-bold whitespace-nowrap tracking-wide text-base">Time Slot</th>
+              <th className="px-3 py-5 font-bold text-center whitespace-nowrap tracking-wide text-base">Study Hrs</th>
+              <th className="px-5 py-5 font-bold tracking-wide text-base min-w-[150px]">Subject</th>
+              <th className="px-5 py-5 font-bold tracking-wide text-base min-w-[200px]">Chapter / Activity</th>
+              <th className="px-5 py-5 font-bold w-auto tracking-wide text-base min-w-[150px]">Remarks / Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50">
@@ -1827,32 +1786,37 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
                   >
                     {!isPastDate && (
                       <td 
-                        className="px-2.5 py-3 text-center text-slate-500 hover:text-cyan-300 cursor-grab active:cursor-grabbing select-none"
+                        className="px-2.5 py-4 text-center text-slate-500 hover:text-cyan-300 cursor-grab active:cursor-grabbing select-none"
                         title="Drag to reorder slot"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <GripVertical className="w-4 h-4 inline-block opacity-60 hover:opacity-100" />
+                        <GripVertical className="w-5 h-5 inline-block opacity-60 hover:opacity-100" />
                       </td>
                     )}
-                    <td className="px-4 py-3 font-mono text-[11px] whitespace-nowrap">{slot.time}</td>
-                    <td className="px-4 py-3 font-medium" colSpan={2}>
-                      <div className="flex items-center gap-2">
+                    <td className="px-4 py-4 font-mono text-base whitespace-nowrap font-medium text-slate-300">{slot.time}</td>
+                    <td className="px-3 py-4 text-center whitespace-nowrap">
+                      <span className="px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono text-sm font-bold">
+                        {parseSlotHours(slot.time) >= 1 ? `${parseSlotHours(slot.time).toFixed(1)}h` : `${Math.round(parseSlotHours(slot.time) * 60)}m`}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 font-semibold text-base text-slate-300" colSpan={2}>
+                      <div className="flex items-center gap-3">
                         <span>☕ {slot.activity || slot.subject || "Rest Break"}</span>
                         {isLive && (
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_10px_rgba(251,191,36,0.4)] flex items-center gap-1 shrink-0 animate-pulse">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
+                          <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_10px_rgba(251,191,36,0.4)] flex items-center gap-2 shrink-0 animate-pulse">
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping inline-block" />
                             LIVE BREAK
                           </span>
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-5 py-4">
                       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={(e) => { e.stopPropagation(); handleToggle(slot.id, true); }} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer ${slot.completed ? "bg-slate-800 text-slate-400" : "bg-amber-950/40 border border-amber-500/30 text-amber-300 hover:bg-amber-900/40"}`}>
+                        <button onClick={(e) => { e.stopPropagation(); handleToggle(slot.id, true); }} className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all cursor-pointer ${slot.completed ? "bg-slate-800 text-slate-400" : "bg-amber-950/40 border border-amber-500/30 text-amber-300 hover:bg-amber-900/40"}`}>
                           {slot.completed ? "Undo" : "Done"}
                         </button>
                         {isLive && (
-                          <span className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-amber-500/20 border border-amber-500/40 text-amber-300 animate-pulse">
+                          <span className="px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider bg-amber-500/20 border border-amber-500/40 text-amber-300 animate-pulse">
                             ● RUNNING
                           </span>
                         )}
@@ -1894,38 +1858,50 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
                 >
                   {!isPastDate && (
                     <td 
-                      className="px-2.5 py-3 text-center text-slate-500 hover:text-cyan-300 cursor-grab active:cursor-grabbing select-none"
+                      className="px-2.5 py-5 text-center text-slate-500 hover:text-cyan-300 cursor-grab active:cursor-grabbing select-none"
                       title="Drag to reorder slot"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <GripVertical className="w-4 h-4 inline-block opacity-60 hover:opacity-100" />
+                      <GripVertical className="w-5 h-5 inline-block opacity-60 hover:opacity-100" />
                     </td>
                   )}
-                  <td className="px-4 py-3 font-mono text-[11px] whitespace-nowrap">
+                  <td className="px-4 py-5 font-mono text-base whitespace-nowrap font-medium text-slate-300">
                     {slot.time}
                   </td>
-                  <td className="px-4 py-3 font-medium flex items-center gap-2">
+                  <td className="px-3 py-5 text-center whitespace-nowrap">
+                    <div className="inline-flex flex-col items-center gap-1">
+                      <span className="px-3 py-1 rounded-lg bg-sky-500/15 border border-sky-400/30 text-sky-300 font-mono text-sm font-black shadow-sm">
+                        {totalHrs.toFixed(1)}h
+                      </span>
+                      {slot.studiedDurationHours !== undefined && slot.studiedDurationHours > 0 && (
+                        <span className="text-[11px] font-mono font-bold text-emerald-400">
+                          {slot.studiedDurationHours.toFixed(1)}h done
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-5 py-5 font-bold flex items-center gap-3 text-base text-slate-100">
                     {isCompleted && (
-                       <CheckCircle2 className="w-4 h-4 text-emerald-400 animate-in zoom-in spin-in-12 duration-500 shadow-sm shrink-0" />
+                       <CheckCircle2 className="w-6 h-6 text-emerald-400 animate-in zoom-in spin-in-12 duration-500 shadow-sm shrink-0" />
                     )}
                     {isLive && !isCompleted && (
-                       <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_10px_rgba(251,191,36,0.5)] flex items-center gap-1 shrink-0 animate-pulse">
-                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
+                       <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_10px_rgba(251,191,36,0.5)] flex items-center gap-2 shrink-0 animate-pulse">
+                         <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping inline-block" />
                          LIVE
                        </span>
                     )}
-                    <span className={`${isCompleted ? 'line-through decoration-emerald-500/30 text-emerald-100/70' : ''}`}>
+                    <span className={`${isCompleted ? 'line-through decoration-emerald-500/30 text-emerald-100/50' : 'text-slate-100'}`}>
                        {slot.subject}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-col gap-1.5">
-                      <div className="truncate max-w-[200px]" title={slot.activity}>{slot.activity}</div>
+                  <td className="px-5 py-5">
+                    <div className="flex flex-col gap-2">
+                      <div className="text-base font-medium text-slate-300 leading-snug" title={slot.activity}>{slot.activity}</div>
                       
                       {/* Quick Tag Inline Editor */}
                       <div onClick={(e) => e.stopPropagation()}>
                         {activeTagEditId === slot.id ? (
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-2">
                             <input
                               autoFocus
                               type="text"
@@ -1937,23 +1913,23 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
                               }}
                               onBlur={() => handleSaveQuickTag(slot.id)}
                               placeholder="e.g. Concept Review"
-                              className="bg-slate-900 border border-emerald-500/50 rounded px-2 py-0.5 text-[10px] text-white focus:outline-none w-32"
+                              className="bg-slate-900 border border-emerald-500/50 rounded px-2.5 py-1 text-xs text-white focus:outline-none w-36"
                             />
                           </div>
                         ) : slot.quickTag ? (
                           <div 
-                            className="inline-flex items-center gap-1.5 bg-indigo-950/40 border border-indigo-500/30 text-indigo-300 px-1.5 py-0.5 rounded cursor-pointer hover:bg-indigo-900/60 transition-colors w-fit"
+                            className="inline-flex items-center gap-1.5 bg-indigo-950/40 border border-indigo-500/30 text-indigo-300 px-2 py-0.5 rounded cursor-pointer hover:bg-indigo-900/60 transition-colors w-fit"
                             onClick={() => {
                               setActiveTagValue(slot.quickTag || '');
                               setActiveTagEditId(slot.id);
                             }}
                           >
-                            <span className="text-[9px] font-bold tracking-wide uppercase">{slot.quickTag}</span>
-                            <Edit3 className="w-2.5 h-2.5 opacity-50" />
+                            <span className="text-[10px] font-bold tracking-wide uppercase">{slot.quickTag}</span>
+                            <Edit3 className="w-3 h-3 opacity-50" />
                           </div>
                         ) : (
                           <button 
-                            className="text-[9px] font-bold text-slate-500 hover:text-indigo-400 transition-colors uppercase tracking-wide flex items-center gap-1"
+                            className="text-[10px] font-bold text-slate-500 hover:text-indigo-400 transition-colors uppercase tracking-wide flex items-center gap-1"
                             onClick={() => {
                               setActiveTagValue('');
                               setActiveTagEditId(slot.id);
@@ -1965,22 +1941,22 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
                       </div>
 
                       {(slot.studiedDurationHours !== undefined && slot.studiedDurationHours > 0) && (
-                        <div className="flex items-center gap-2 mt-0.5">
-                           <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden shadow-inner border border-slate-700/50">
+                        <div className="flex items-center gap-2 mt-1">
+                           <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden shadow-inner border border-slate-700/50">
                               <div className="h-full bg-gradient-to-r from-amber-500 to-amber-300 transition-all duration-1000 ease-out relative" style={{ width: `${Math.min(100, ((slot.studiedDurationHours || 0) / (parseSlotHours(slot.time) || 2)) * 100)}%` }}>
                                 {isCompleted && <div className="absolute inset-0 bg-white/20 animate-pulse"></div>}
                               </div>
                            </div>
-                           <span className="text-[9px] font-mono font-bold text-amber-400">{slot.studiedDurationHours.toFixed(2)}h / {parseSlotHours(slot.time)}h</span>
+                           <span className="text-[10px] font-mono font-bold text-amber-400">{slot.studiedDurationHours.toFixed(2)}h / {parseSlotHours(slot.time)}h</span>
                         </div>
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-5">
                     <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                       <button 
                         onClick={(e) => { e.stopPropagation(); handleToggle(slot.id, true); }}
-                        className={`px-3 py-1.5 rounded-lg border text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer ${isCompleted ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/30" : "bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700"}`}
+                        className={`px-4 py-2 rounded-lg border text-xs uppercase font-bold tracking-wider transition-all cursor-pointer ${isCompleted ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/30" : "bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700"}`}
                       >
                         {isCompleted ? "Undo" : "Done"}
                       </button>
@@ -1993,10 +1969,10 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
                               setCurrentSubject(subjects.find(s => s.name.toLowerCase().includes(slot.subject.toLowerCase()) || s.code.toLowerCase().includes(slot.subject.toLowerCase()))?.id || "general");
                               setActiveTab("timer");
                             }}
-                            className="px-3.5 py-1.5 rounded-lg border border-amber-400 text-[10px] uppercase font-black tracking-wider bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-[0_0_15px_rgba(251,191,36,0.6)] flex items-center gap-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95 animate-pulse"
+                            className="px-4 py-2 rounded-lg border border-amber-400 text-xs uppercase font-black tracking-wider bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-[0_0_15px_rgba(251,191,36,0.6)] flex items-center gap-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95 animate-pulse"
                             title="Jump directly to Live Pomodoro Timer for this running slot"
                           >
-                            <span className="w-2 h-2 rounded-full bg-red-600 animate-ping shrink-0" />
+                            <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping shrink-0" />
                             <span>🔴 LIVE</span>
                           </button>
                         ) : !isCompleted ? (
@@ -2007,7 +1983,7 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
                               setCurrentSubject(subjects.find(s => s.name.toLowerCase().includes(slot.subject.toLowerCase()) || s.code.toLowerCase().includes(slot.subject.toLowerCase()))?.id || "general");
                               setActiveTab("timer");
                             }}
-                            className="px-3 py-1.5 rounded-lg border text-[10px] uppercase font-bold tracking-wider text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 border-cyan-500/30 hover:bg-cyan-900/60 cursor-pointer transition-all active:scale-95"
+                            className="px-4 py-2 rounded-lg border text-xs uppercase font-bold tracking-wider text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 border-cyan-500/30 hover:bg-cyan-900/60 cursor-pointer transition-all active:scale-95"
                           >
                             Start
                           </button>
@@ -2477,72 +2453,211 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
                       />
                     </div>
                   </div>
-                  <div className="space-y-4 pt-4 border-t border-slate-700/50">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider">
-                        Targeted Hrs: {availableHours} Hrs
-                      </label>
-                    </div>
-                    <input
-                      type="range"
-                      min={4}
-                      max={16}
-                      step={1}
-                      value={availableHours}
-                      onChange={(e) => {
-                        const nextHrs = Number(e.target.value);
-                        setAvailableHours(nextHrs);
-                        setDailyTarget(selectedDateStr, nextHrs);
-                        if (onUpdateTargetHours) onUpdateTargetHours(nextHrs);
-                      }}
-                      className="w-full accent-indigo-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
-                    />
-                    <div className="flex justify-between text-[10px] text-slate-500 font-mono font-medium">
-                      <span>4h</span>
-                      <span className="text-indigo-400/80">8h</span>
-                      <span>16h</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider">Time Split (Primary)</label>
-                        <input
-                          type="range"
-                          min={20}
-                          max={100}
-                          step={10}
-                          value={splitRatio}
-                          onChange={(e) => setSplitRatio(Number(e.target.value))}
-                          className="w-full accent-teal-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
-                        />
-                        <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                          <span>Pri: {splitRatio}%</span>
-                          <span>Sec: {100 - splitRatio}%</span>
+                  <div className="space-y-5 pt-4 border-t border-slate-700/50">
+                    {/* Master Total Daily Target Hours & Minutes Feed */}
+                    <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/60 to-purple-950/40 border border-indigo-500/30 space-y-3 shadow-lg">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                          <Zap className="w-4 h-4 text-amber-400" />
+                          <span>Total Daily Target (Feed in Hrs & Min)</span>
+                        </label>
+                        <div className="text-xs text-amber-300 font-mono font-black bg-amber-500/20 px-2.5 py-1 rounded-lg border border-amber-500/40">
+                          {Math.floor(availableHours)}h {Math.round((availableHours % 1) * 60)}m ({availableHours.toFixed(1)} hrs total)
                         </div>
                       </div>
-                      <div className="space-y-2">
-                         <div className="flex flex-col text-[10px] text-slate-300 font-mono bg-slate-900 border border-slate-700/80 rounded-lg overflow-hidden">
-                          <div className="flex justify-between bg-slate-800 px-2 py-1 border-b border-slate-700 font-bold">
-                            <span className="w-1/2">Time Split</span>
-                            <span className="w-1/4 text-center">Hrs</span>
-                            <span className="w-1/4 text-center">Min</span>
-                          </div>
-                          <div className="flex justify-between px-2 py-1 border-b border-slate-700">
-                            <span className="w-1/2 text-indigo-300 truncate">Primary Sub</span>
-                            <span className="w-1/4 text-center text-slate-400">{Math.floor(availableHours * (splitRatio/100))}</span>
-                            <span className="w-1/4 text-center text-slate-400">{Math.round((availableHours * (splitRatio/100) % 1) * 60)}</span>
-                          </div>
-                          <div className="flex justify-between px-2 py-1">
-                            <span className="w-1/2 text-teal-300 truncate">Secondary Sub</span>
-                            <span className="w-1/4 text-center text-slate-400">{Math.floor(availableHours * ((100-splitRatio)/100))}</span>
-                            <span className="w-1/4 text-center text-slate-400">{Math.round((availableHours * ((100-splitRatio)/100) % 1) * 60)}</span>
-                          </div>
-                         </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="0"
+                            max="24"
+                            value={Math.floor(availableHours).toString()}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const h = parseFloat(e.target.value) || 0;
+                              const currentTotalM = Math.round((availableHours % 1) * 60);
+                              const newTotal = Math.max(0, h + (currentTotalM / 60));
+                              setAvailableHours(newTotal);
+                              setDailyTarget(selectedDateStr, newTotal);
+                              if (onUpdateTargetHours) onUpdateTargetHours(newTotal);
+                            }}
+                            placeholder="0"
+                            className="w-full bg-slate-900 border border-indigo-500/50 rounded-xl px-4 py-2.5 text-base text-amber-300 font-black focus:border-amber-400 focus:outline-none shadow-inner"
+                          />
+                          <span className="absolute right-3.5 top-3 text-xs text-indigo-300 font-extrabold pointer-events-none">Hours (Hrs)</span>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="0"
+                            max="59"
+                            step="5"
+                            value={Math.round((availableHours % 1) * 60).toString()}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const currentTotalH = Math.floor(availableHours);
+                              const m = parseFloat(e.target.value) || 0;
+                              const newTotal = Math.max(0, currentTotalH + (m / 60));
+                              setAvailableHours(newTotal);
+                              setDailyTarget(selectedDateStr, newTotal);
+                              if (onUpdateTargetHours) onUpdateTargetHours(newTotal);
+                            }}
+                            placeholder="0"
+                            className="w-full bg-slate-900 border border-indigo-500/50 rounded-xl px-4 py-2.5 text-base text-amber-300 font-black focus:border-amber-400 focus:outline-none shadow-inner"
+                          />
+                          <span className="absolute right-3.5 top-3 text-xs text-indigo-300 font-extrabold pointer-events-none">Minutes (Min)</span>
+                        </div>
                       </div>
+
+                      {/* Quick preset buttons */}
+                      <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Quick Select:</span>
+                        {[6, 8, 10, 12, 14, 16].map((hrs) => (
+                          <button
+                            key={hrs}
+                            type="button"
+                            onClick={() => {
+                              setAvailableHours(hrs);
+                              setDailyTarget(selectedDateStr, hrs);
+                              if (onUpdateTargetHours) onUpdateTargetHours(hrs);
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer ${
+                              Math.abs(availableHours - hrs) < 0.1
+                                ? 'bg-amber-400 text-slate-950 shadow-md scale-105'
+                                : 'bg-slate-900/90 text-slate-300 hover:bg-indigo-600/40 hover:text-white border border-slate-700/60'
+                            }`}
+                          >
+                            {hrs}h
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Subject-Wise Time Allocation (Primary & Secondary Split) */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider">
+                          Subject-wise Time Allocation (Optional Custom Split)
+                        </label>
+                        <span className="text-[10px] text-slate-400 font-mono">Adjusting subjects updates total</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2 p-3 bg-slate-900/40 border border-slate-800 rounded-xl">
+                          <label className="text-[10px] font-extrabold text-indigo-300/90 uppercase tracking-wider truncate block w-full">
+                            Pri: {primarySubject === 'N/A' ? '(None)' : primarySubject.split(' ')[0]}
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="0"
+                                max="24"
+                                value={Math.floor(availableHours * (splitRatio/100)).toString()}
+                                onFocus={(e) => e.target.select()}
+                                onChange={(e) => {
+                                  const h = parseFloat(e.target.value) || 0;
+                                  const currentM = Math.round((availableHours * (splitRatio/100) % 1) * 60);
+                                  const priTotal = Math.max(0, h + (currentM / 60));
+                                  const secTotal = secondarySubject === 'N/A' ? 0 : availableHours * ((100-splitRatio)/100);
+                                  const total = priTotal + secTotal;
+                                  setAvailableHours(total);
+                                  setDailyTarget(selectedDateStr, total);
+                                  if (onUpdateTargetHours) onUpdateTargetHours(total);
+                                  setSplitRatio(total > 0 ? (priTotal / total) * 100 : 100);
+                                }}
+                                placeholder="0"
+                                className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-indigo-300 font-bold focus:border-indigo-500 focus:outline-none shadow-inner"
+                              />
+                              <span className="absolute right-3 top-2.5 text-[10px] text-slate-500 font-bold pointer-events-none">Hrs</span>
+                            </div>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="0"
+                                max="59"
+                                step="5"
+                                value={Math.round((availableHours * (splitRatio/100) % 1) * 60).toString()}
+                                onFocus={(e) => e.target.select()}
+                                onChange={(e) => {
+                                  const h = Math.floor(availableHours * (splitRatio/100));
+                                  const m = parseFloat(e.target.value) || 0;
+                                  const priTotal = Math.max(0, h + (m / 60));
+                                  const secTotal = secondarySubject === 'N/A' ? 0 : availableHours * ((100-splitRatio)/100);
+                                  const total = priTotal + secTotal;
+                                  setAvailableHours(total);
+                                  setDailyTarget(selectedDateStr, total);
+                                  if (onUpdateTargetHours) onUpdateTargetHours(total);
+                                  setSplitRatio(total > 0 ? (priTotal / total) * 100 : 100);
+                                }}
+                                placeholder="0"
+                                className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-indigo-300 font-bold focus:border-indigo-500 focus:outline-none shadow-inner"
+                              />
+                              <span className="absolute right-3 top-2.5 text-[10px] text-slate-500 font-bold pointer-events-none">Min</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {secondarySubject !== 'N/A' && (
+                          <div className="space-y-2 p-3 bg-slate-900/40 border border-slate-800 rounded-xl">
+                            <label className="text-[10px] font-extrabold text-teal-300/90 uppercase tracking-wider truncate block w-full">
+                              Sec: {secondarySubject.split(' ')[0]}
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="24"
+                                  value={Math.floor(availableHours * ((100-splitRatio)/100)).toString()}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => {
+                                    const h = parseFloat(e.target.value) || 0;
+                                    const currentM = Math.round((availableHours * ((100-splitRatio)/100) % 1) * 60);
+                                    const secTotal = Math.max(0, h + (currentM / 60));
+                                    const priTotal = availableHours * (splitRatio/100);
+                                    const total = priTotal + secTotal;
+                                    setAvailableHours(total);
+                                    setDailyTarget(selectedDateStr, total);
+                                    if (onUpdateTargetHours) onUpdateTargetHours(total);
+                                    setSplitRatio(total > 0 ? (priTotal / total) * 100 : 100);
+                                  }}
+                                  placeholder="0"
+                                  className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-teal-300 font-bold focus:border-teal-500 focus:outline-none shadow-inner"
+                                />
+                                <span className="absolute right-3 top-2.5 text-[10px] text-slate-500 font-bold pointer-events-none">Hrs</span>
+                              </div>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="59"
+                                  step="5"
+                                  value={Math.round((availableHours * ((100-splitRatio)/100) % 1) * 60).toString()}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) => {
+                                    const h = Math.floor(availableHours * ((100-splitRatio)/100));
+                                    const m = parseFloat(e.target.value) || 0;
+                                    const secTotal = Math.max(0, h + (m / 60));
+                                    const priTotal = availableHours * (splitRatio/100);
+                                    const total = priTotal + secTotal;
+                                    setAvailableHours(total);
+                                    setDailyTarget(selectedDateStr, total);
+                                    if (onUpdateTargetHours) onUpdateTargetHours(total);
+                                    setSplitRatio(total > 0 ? (priTotal / total) * 100 : 100);
+                                  }}
+                                  placeholder="0"
+                                  className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-teal-300 font-bold focus:border-teal-500 focus:outline-none shadow-inner"
+                                />
+                                <span className="absolute right-3 top-2.5 text-[10px] text-slate-500 font-bold pointer-events-none">Min</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
-                  
                   <div className="space-y-4 pt-4 border-t border-slate-700/50">
                      <h4 className="text-[10px] font-extrabold text-indigo-300/80 uppercase tracking-wider mb-2">Events & Breaks</h4>
                      <div className="grid grid-cols-2 gap-4">
@@ -2693,7 +2808,8 @@ ${dinnerDuration === 'N/A' ? 'Dinner Break: DO NOT schedule any dinner break tod
                     className="w-full bg-slate-900 border border-slate-700/80 hover:border-slate-600 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500/60 min-h-[80px] shadow-inner resize-none transition-colors"
                   />
                 </div>
-              </main>
+              </div>
+            </main>
             {/* Layer 3: Sticky Action Footer */}
             <footer className="px-6 sm:px-8 py-4 border-t border-slate-800/60 backdrop-blur-md shrink-0 flex items-center justify-end gap-3 sticky bottom-0 z-20 bg-[#0B1528] pb-[calc(1rem+env(safe-area-inset-bottom,0px))] md:pb-4">
               <button

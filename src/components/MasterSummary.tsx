@@ -32,7 +32,8 @@ import {
   Table,
   Layers,
   TrendingUp,
-  BarChart2
+  BarChart2,
+  X
 } from 'lucide-react';
 
 interface MasterSummaryProps {
@@ -267,7 +268,9 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
 
   const [expandedSubjectId, setExpandedSubjectId] = useState<string | null>(null);
   const [loggingSubjectId, setLoggingSubjectId] = useState<string | null>(null);
-  const [customLogHours, setCustomLogHours] = useState<string>('');
+  const [customFeedHours, setCustomFeedHours] = useState<string>('1');
+  const [customFeedMinutes, setCustomFeedMinutes] = useState<string>('0');
+  const [customFeedNote, setCustomFeedNote] = useState<string>('');
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
 
   // Trend micro-chart timeframe state
@@ -371,18 +374,27 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
     }
   };
 
-  // Quick Action Handler to log hours directly
-  const handleQuickLogHours = (subjectId: string, hours: number) => {
+  // Manual Data Feeding Handler to log hours and minutes directly
+  const handleManualFeedSubmit = (subjectId: string) => {
+    const h = parseFloat(customFeedHours) || 0;
+    const m = parseFloat(customFeedMinutes) || 0;
+    const totalHours = Number((h + (m / 60)).toFixed(2));
+    if (totalHours <= 0) return;
+
     const subj = subjects.find(s => s.id === subjectId);
     logStudyActivity({
       dateStr: getISTYMD(),
       subject: subj?.name || 'General Study',
       subjectId: subjectId,
-      durationHours: hours,
+      durationHours: totalHours,
       sourceType: 'MANUAL',
-      chapterTitle: 'Quick Log via Master Summary'
+      chapterTitle: customFeedNote.trim() ? `Manual: ${customFeedNote.trim()}` : 'Manual Study Log',
+      notes: customFeedNote.trim() || undefined
     });
     setLoggingSubjectId(null);
+    setCustomFeedHours('1');
+    setCustomFeedMinutes('0');
+    setCustomFeedNote('');
   };
 
   // Handle toggling chapter revisions directly in drill-down
@@ -651,23 +663,87 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
           </div>
         </div>
 
-        {/* Quick Log Hours Drawer */}
+        {/* Manual Feed Hours & Minutes Drawer */}
         {loggingSubjectId === subject.id && (
-          <div className="bg-slate-950/95 border border-amber-500/40 rounded-xl p-3 space-y-2 animate-fadeIn">
-            <div className="text-xs text-amber-200 font-semibold flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Log study hours for <span className="font-bold text-white">{subject.name}</span>:</span>
+          <div className="bg-slate-950/95 border border-amber-500/40 rounded-xl p-3.5 space-y-3 animate-fadeIn shadow-xl">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-amber-200 font-bold flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-amber-400" />
+                <span>Manual Feed Study Hours for <span className="text-white font-extrabold">{subject.name}</span></span>
+              </div>
+              <button
+                onClick={() => setLoggingSubjectId(null)}
+                className="text-slate-400 hover:text-slate-200 p-1 cursor-pointer"
+                title="Close"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {[0.5, 1.0, 1.5, 2.0, 3.0].map((hrs) => (
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div>
+                <label className="block text-[10px] font-extrabold text-slate-300 uppercase mb-1">Hours (Hrs)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="24"
+                  step="1"
+                  value={customFeedHours}
+                  onChange={(e) => setCustomFeedHours(e.target.value)}
+                  placeholder="0"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-extrabold text-slate-300 uppercase mb-1">Minutes (Min)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  step="5"
+                  value={customFeedMinutes}
+                  onChange={(e) => setCustomFeedMinutes(e.target.value)}
+                  placeholder="0"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div className="col-span-2 sm:col-span-2">
+                <label className="block text-[10px] font-extrabold text-slate-300 uppercase mb-1">Topic / Notes (Optional)</label>
+                <input
+                  type="text"
+                  value={customFeedNote}
+                  onChange={(e) => setCustomFeedNote(e.target.value)}
+                  placeholder="e.g. Chapter Questions / Revision"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+              <div className="text-[11px] font-mono text-slate-300">
+                Total: <strong className="text-amber-300 font-bold">
+                  {customFeedHours || 0}h {customFeedMinutes || 0}m
+                </strong> ({((parseFloat(customFeedHours) || 0) + (parseFloat(customFeedMinutes) || 0) / 60).toFixed(2)} hrs)
+              </div>
+              <div className="flex items-center gap-2">
                 <button
-                  key={hrs}
-                  onClick={() => handleQuickLogHours(subject.id, hrs)}
-                  className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/40 border border-amber-500/50 text-amber-200 font-mono font-bold text-xs transition-all cursor-pointer"
+                  type="button"
+                  onClick={() => setLoggingSubjectId(null)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
                 >
-                  +{hrs}h
+                  Cancel
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => handleManualFeedSubmit(subject.id)}
+                  disabled={((parseFloat(customFeedHours) || 0) + (parseFloat(customFeedMinutes) || 0) / 60) <= 0}
+                  className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 text-slate-950 font-black text-xs shadow-md cursor-pointer transition-all active:scale-95"
+                >
+                  Save Log
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1005,48 +1081,90 @@ export const MasterSummary: React.FC<MasterSummaryProps> = ({ subjects, isStrict
                           </div>
                         </div>
 
-                        {/* Quick Log Hours Drawer */}
+                        {/* Manual Feed Hours & Minutes Drawer in Table View */}
                         {loggingSubjectId === subject.id && (
-                          <div className="bg-slate-950/95 border border-amber-500/40 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 animate-fadeIn">
-                            <div className="text-xs text-amber-200 font-semibold flex items-center gap-1.5">
-                              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                              <span>Log study hours for <span className="font-bold text-white">{subject.name}</span>:</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {[0.5, 1.0, 1.5, 2.0, 3.0].map((hrs) => (
-                                <button
-                                  key={hrs}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleQuickLogHours(subject.id, hrs);
-                                  }}
-                                  className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/40 border border-amber-500/50 text-amber-200 font-mono font-bold text-xs transition-all cursor-pointer"
-                                >
-                                  +{hrs}h
-                                </button>
-                              ))}
-                              <input
-                                type="number"
-                                step="0.5"
-                                min="0.5"
-                                placeholder="Hrs"
-                                value={customLogHours}
-                                onChange={(e) => setCustomLogHours(e.target.value)}
-                                className="w-16 bg-slate-900 border border-amber-500/40 rounded-lg px-2 py-1 text-xs text-white font-mono focus:outline-none"
-                              />
+                          <div 
+                            onClick={(e) => e.stopPropagation()} 
+                            className="bg-slate-950/95 border border-amber-500/40 rounded-xl p-3.5 space-y-3 animate-fadeIn shadow-xl"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs text-amber-200 font-bold flex items-center gap-1.5">
+                                <Clock className="w-4 h-4 text-amber-400" />
+                                <span>Manual Feed Study Hours for <span className="text-white font-extrabold">{subject.name}</span></span>
+                              </div>
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const h = parseFloat(customLogHours);
-                                  if (h > 0) {
-                                    handleQuickLogHours(subject.id, h);
-                                    setCustomLogHours('');
-                                  }
-                                }}
-                                className="px-3 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs cursor-pointer hover:bg-amber-400"
+                                onClick={() => setLoggingSubjectId(null)}
+                                className="text-slate-400 hover:text-slate-200 p-1 cursor-pointer"
+                                title="Close"
                               >
-                                Save
+                                <X className="w-3.5 h-3.5" />
                               </button>
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                              <div>
+                                <label className="block text-[10px] font-extrabold text-slate-300 uppercase mb-1">Hours (Hrs)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="24"
+                                  step="1"
+                                  value={customFeedHours}
+                                  onChange={(e) => setCustomFeedHours(e.target.value)}
+                                  placeholder="0"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold focus:border-amber-400 focus:outline-none"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-extrabold text-slate-300 uppercase mb-1">Minutes (Min)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="59"
+                                  step="5"
+                                  value={customFeedMinutes}
+                                  onChange={(e) => setCustomFeedMinutes(e.target.value)}
+                                  placeholder="0"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono font-bold focus:border-amber-400 focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="col-span-2 sm:col-span-2">
+                                <label className="block text-[10px] font-extrabold text-slate-300 uppercase mb-1">Topic / Notes (Optional)</label>
+                                <input
+                                  type="text"
+                                  value={customFeedNote}
+                                  onChange={(e) => setCustomFeedNote(e.target.value)}
+                                  placeholder="e.g. Chapter Questions / Revision"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+                              <div className="text-[11px] font-mono text-slate-300">
+                                Total: <strong className="text-amber-300 font-bold">
+                                  {customFeedHours || 0}h {customFeedMinutes || 0}m
+                                </strong> ({((parseFloat(customFeedHours) || 0) + (parseFloat(customFeedMinutes) || 0) / 60).toFixed(2)} hrs)
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setLoggingSubjectId(null)}
+                                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleManualFeedSubmit(subject.id)}
+                                  disabled={((parseFloat(customFeedHours) || 0) + (parseFloat(customFeedMinutes) || 0) / 60) <= 0}
+                                  className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 text-slate-950 font-black text-xs shadow-md cursor-pointer transition-all active:scale-95"
+                                >
+                                  Save Log
+                                </button>
+                              </div>
                             </div>
                           </div>
                         )}

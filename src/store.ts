@@ -259,6 +259,12 @@ export const useStore = create<GlobalState>()(
       dailyTargets: {},
       getDailyTarget: (dateStr) => {
         const state = get();
+        // Priority 1: User explicitly configured/saved target for this date
+        if (state.dailyTargets && typeof state.dailyTargets[dateStr] === 'number') {
+          return state.dailyTargets[dateStr];
+        }
+
+        // Priority 2: Calculate planned from active schedule slots if available
         const slots = state.schedulesByDate && state.schedulesByDate[dateStr] 
           ? state.schedulesByDate[dateStr] 
           : (dateStr === getISTYMD() ? state.timetable : []);
@@ -292,11 +298,7 @@ export const useStore = create<GlobalState>()(
           });
         }
 
-        const manualTarget = (state.dailyTargets && typeof state.dailyTargets[dateStr] === 'number') 
-          ? state.dailyTargets[dateStr] 
-          : (state.targetStudyHours || 8);
-
-        return planned > 0 ? Number(planned.toFixed(2)) : manualTarget;
+        return planned > 0 ? Number(planned.toFixed(2)) : (state.targetStudyHours || 8);
       },
       setDailyTarget: (dateStr, target) => {
         set((state) => {
@@ -433,7 +435,7 @@ export const useStore = create<GlobalState>()(
         set((state) => {
           // 1. Recalculate completed chapters (topics) for all subjects
           const updatedSubjects = state.subjects.map((sub) => {
-            const completedCount = sub.topics.filter((t) => t.rev1).length;
+            const completedCount = sub.topics.filter((t) => t.completed || t.rev1 || t.rev2 || t.rev3).length;
             return {
               ...sub,
               completedChapters: completedCount,
@@ -911,6 +913,43 @@ export const useStore = create<GlobalState>()(
         set((state) => {
           const remainingLogs = (state.studyHistoryLogs || []).filter((l) => l.id !== id);
           
+          // Revert slot progress if this log was linked to a timetable slot
+          let newSchedules = state.schedulesByDate;
+          let newTimetable = state.timetable;
+          if (targetLog.chapterId && targetLog.chapterId.startsWith('slot-')) {
+            const slotId = targetLog.chapterId.replace('slot-', '');
+            const slots = state.schedulesByDate[targetDate] || (targetDate === getISTYMD() ? state.timetable : []);
+            
+            const updatedSlots = slots.map(slot => {
+              if (slot.id === slotId) {
+                const newStudied = Math.max(0, (slot.studiedDurationHours || 0) - targetLog.durationHours);
+                const totalHrs = slot.totalDurationHours || parseSlotHours(slot.time) || 2;
+                const newProgress = Math.min(100, (newStudied / totalHrs) * 100);
+                
+                let newStatus = slot.status;
+                let isCompleted = slot.completed;
+                if (newStudied < totalHrs) {
+                  isCompleted = false;
+                  newStatus = newStudied > 0 ? 'IN_PROGRESS' : 'PENDING';
+                }
+                
+                return {
+                  ...slot,
+                  studiedDurationHours: newStudied,
+                  progress: newProgress,
+                  completed: isCompleted,
+                  status: newStatus as any
+                };
+              }
+              return slot;
+            });
+            
+            newSchedules = { ...state.schedulesByDate, [targetDate]: updatedSlots };
+            if (targetDate === getISTYMD()) {
+              newTimetable = updatedSlots;
+            }
+          }
+          
           let newStudyLogs = state.studyLogs.map(l => ({ ...l }));
           if (targetLog.durationHours > 0) {
             const targetSubjectId = targetLog.subjectId;
@@ -927,7 +966,9 @@ export const useStore = create<GlobalState>()(
           
           return {
             studyHistoryLogs: remainingLogs,
-            studyLogs: newStudyLogs
+            studyLogs: newStudyLogs,
+            ...(newSchedules ? { schedulesByDate: newSchedules } : {}),
+            ...(newTimetable ? { timetable: newTimetable } : {})
           };
         });
         get().recalculateAllMetrics(targetDate);
@@ -978,8 +1019,15 @@ export const useStore = create<GlobalState>()(
 
       hydrateFromCloud: (data) => {
         if (!data) return;
+        
+        let hydratedSubjects = Array.isArray(data.subjects) ? data.subjects : useStore.getState().subjects;
+        hydratedSubjects = hydratedSubjects.map((sub: CASubject) => {
+          const completedCount = sub.topics?.filter((t) => t.completed || t.rev1 || t.rev2 || t.rev3).length || 0;
+          return { ...sub, completedChapters: completedCount };
+        });
+
         set((state) => ({
-          subjects: Array.isArray(data.subjects) ? data.subjects : state.subjects,
+          subjects: hydratedSubjects,
           timetable: Array.isArray(data.timetable) ? data.timetable : state.timetable,
           schedulesByDate: data.schedulesByDate && typeof data.schedulesByDate === 'object' ? data.schedulesByDate : state.schedulesByDate || {},
           dailyNotes: data.dailyNotes && typeof data.dailyNotes === 'object' ? data.dailyNotes : state.dailyNotes || {},

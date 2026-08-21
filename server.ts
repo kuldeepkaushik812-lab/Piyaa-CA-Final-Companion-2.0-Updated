@@ -51,7 +51,7 @@ const getGeminiClient = () => {
   });
 };
 
-const CANDIDATE_MODELS = ['gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+const CANDIDATE_MODELS = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
 
 async function generateWithFallbackAndRetry(
   ai: GoogleGenAI,
@@ -67,7 +67,7 @@ async function generateWithFallbackAndRetry(
   let lastError: any = null;
 
   for (const model of modelsToTry) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const response = await ai.models.generateContent({
           model,
@@ -79,13 +79,31 @@ async function generateWithFallbackAndRetry(
         lastError = err;
         console.warn(`[Gemini API] Model ${model} attempt ${attempt} failed:`, err?.message || err);
         
-        // If 400 bad request or unsupported parameter, break and try next candidate model immediately
-        if (err?.status === 400 || err?.message?.includes('400') || err?.message?.includes('not found')) {
-          break;
+        const isUnavailableOrQuota = 
+          err?.status === 503 ||
+          err?.status === 429 ||
+          err?.status === 'UNAVAILABLE' ||
+          err?.status === 'RESOURCE_EXHAUSTED' ||
+          err?.message?.includes('503') ||
+          err?.message?.includes('429') ||
+          err?.message?.includes('high demand') ||
+          err?.message?.includes('UNAVAILABLE') ||
+          err?.message?.includes('unavailable') ||
+          err?.message?.includes('Overloaded') ||
+          err?.message?.includes('quota');
+
+        // If 400 bad request, unsupported parameter, or 503 high demand on first attempt, immediately switch candidate models
+        if (
+          err?.status === 400 || 
+          err?.message?.includes('400') || 
+          err?.message?.includes('not found') ||
+          (isUnavailableOrQuota && attempt === 1)
+        ) {
+          break; // Switch to next model immediately for fast failover
         }
         
-        // Exponential backoff
-        await new Promise((res) => setTimeout(res, 1000 * Math.pow(2, attempt - 1)));
+        // Short exponential backoff for other transient errors
+        await new Promise((res) => setTimeout(res, 500 * Math.pow(2, attempt - 1)));
       }
     }
   }
@@ -97,7 +115,7 @@ async function generateWithFallbackAndRetry(
       const fallbackConfig = { ...options.config };
       delete fallbackConfig.tools;
       const response = await ai.models.generateContent({
-        model: CANDIDATE_MODELS[0],
+        model: CANDIDATE_MODELS[1] || CANDIDATE_MODELS[0],
         contents: options.contents,
         config: fallbackConfig,
       });
@@ -406,8 +424,7 @@ Schema:
 }
 `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
+    const response = await generateWithFallbackAndRetry(ai, {
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -694,8 +711,7 @@ app.post('/api/plan-revision-days', async (req, res) => {
     Make sure the sum of all days equals exactly ${totalDays}. Do not include any markdown formatting like \`\`\`json.
     `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
+    const response = await generateWithFallbackAndRetry(ai, {
       contents: prompt,
       config: {
         temperature: 0.1,

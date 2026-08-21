@@ -24,6 +24,7 @@ import { saveProgressToCloud, setupRealtimeCloudSync } from './lib/db';
 import { onAuthUserChanged, auth, isAuthorizedEmail, subscribeAccessControlCloud, syncAccessControlFromCloud } from './lib/auth';
 import { exportToExcel } from './lib/excelExport';
 import { usePWAInstall } from './hooks/usePWAInstall';
+import { useAutoBackup } from './hooks/useAutoBackup';
 import { ExamSimulatorModal } from "./components/ExamSimulatorModal";
 import { StudyBuddyHub } from "./components/StudyBuddyHub";
 import { StudyHistoryHub } from "./components/StudyHistoryHub";
@@ -33,9 +34,11 @@ import { HelpDocumentationModal } from "./components/HelpDocumentationModal";
 import { PreDeployCheckModal } from "./components/PreDeployCheckModal";
 import { FloatingActionDock } from "./components/FloatingActionDock";
 import { MemoryMonitor } from "./components/MemoryMonitor";
+import { GlobalTimerOverlay } from "./components/GlobalTimerOverlay";
 
 export default function App() {
   const { isStandalone } = usePWAInstall();
+  useAutoBackup();
   const activeTab = useStore(state => state.activeTab);
   const setActiveTab = useStore(state => state.setActiveTab);
   const [isStrictMode, setIsStrictMode] = useState(false);
@@ -289,50 +292,57 @@ export default function App() {
     if (!subjects || subjects.length === 0) return;
     hasValidatedOnLoad.current = true;
 
+    const todayKey = getISTYMD();
     let mutated = false;
     const validated = subjects.map(s => {
       let subjMutated = false;
       const topicsValidated = s.topics.map(t => {
         let topicMutated = false;
         
-        // Revert invalid completion states to pending if interaction timestamps are missing
-
-        let nextCompleted = t.completed;
-        if (t.completed && !t.completedAt) {
-          nextCompleted = false;
+        // Preserve user completion states and backfill missing timestamps
+        const isDone = Boolean(t.completed || t.rev1 || t.rev2 || t.rev3);
+        let nextCompleted = isDone;
+        let nextCompletedAt = t.completedAt;
+        if (nextCompleted && !nextCompletedAt) {
+          nextCompletedAt = t.rev1At || t.rev2At || t.rev3At || todayKey;
           topicMutated = true;
         }
 
-        let nextRev1 = t.rev1;
-        if (t.rev1 && !t.rev1At) {
-          nextRev1 = false;
+        let nextRev1 = Boolean(t.rev1 || (t.completed && !t.rev2 && !t.rev3));
+        let nextRev1At = t.rev1At;
+        if (nextRev1 && !nextRev1At) {
+          nextRev1At = nextCompletedAt || todayKey;
           topicMutated = true;
         }
 
-        let nextRev2 = t.rev2;
-        if (t.rev2 && !t.rev2At) {
-          nextRev2 = false;
+        let nextRev2 = Boolean(t.rev2);
+        let nextRev2At = t.rev2At;
+        if (nextRev2 && !nextRev2At) {
+          nextRev2At = todayKey;
           topicMutated = true;
         }
 
-        let nextRev3 = t.rev3;
-        if (t.rev3 && !t.rev3At) {
-          nextRev3 = false;
+        let nextRev3 = Boolean(t.rev3);
+        let nextRev3At = t.rev3At;
+        if (nextRev3 && !nextRev3At) {
+          nextRev3At = todayKey;
           topicMutated = true;
         }
 
-        let nextLdr = t.ldr;
-        if (t.ldr && !t.ldrAt) {
-          nextLdr = false;
+        let nextLdr = Boolean(t.ldr);
+        let nextLdrAt = t.ldrAt;
+        if (nextLdr && !nextLdrAt) {
+          nextLdrAt = todayKey;
           topicMutated = true;
         }
 
         // Standardize completedDates set
-        const datesSet = new Set<string>();
-        if (nextRev1 && t.rev1At) datesSet.add(t.rev1At);
-        if (nextRev2 && t.rev2At) datesSet.add(t.rev2At);
-        if (nextRev3 && t.rev3At) datesSet.add(t.rev3At);
-        if (nextLdr && t.ldrAt) datesSet.add(t.ldrAt);
+        const datesSet = new Set<string>(t.completedDates || []);
+        if (nextCompleted && nextCompletedAt) datesSet.add(nextCompletedAt);
+        if (nextRev1 && nextRev1At) datesSet.add(nextRev1At);
+        if (nextRev2 && nextRev2At) datesSet.add(nextRev2At);
+        if (nextRev3 && nextRev3At) datesSet.add(nextRev3At);
+        if (nextLdr && nextLdrAt) datesSet.add(nextLdrAt);
 
         const nextCompletedDates = Array.from(datesSet).sort();
         const nextLastCompletedDate = nextCompletedDates.length > 0 ? nextCompletedDates[nextCompletedDates.length - 1] : undefined;
@@ -345,20 +355,31 @@ export default function App() {
           topicMutated || 
           !isDatesArrayIdentical || 
           t.lastCompletedDate !== nextLastCompletedDate ||
+          t.completed !== nextCompleted ||
+          t.completedAt !== nextCompletedAt ||
           t.rev1 !== nextRev1 ||
+          t.rev1At !== nextRev1At ||
           t.rev2 !== nextRev2 ||
+          t.rev2At !== nextRev2At ||
           t.rev3 !== nextRev3 ||
-          t.ldr !== nextLdr
+          t.rev3At !== nextRev3At ||
+          t.ldr !== nextLdr ||
+          t.ldrAt !== nextLdrAt
         ) {
           subjMutated = true;
           mutated = true;
           return {
             ...t,
             completed: nextCompleted,
+            completedAt: nextCompletedAt,
             rev1: nextRev1,
+            rev1At: nextRev1At,
             rev2: nextRev2,
+            rev2At: nextRev2At,
             rev3: nextRev3,
+            rev3At: nextRev3At,
             ldr: nextLdr,
+            ldrAt: nextLdrAt,
             completedDates: nextCompletedDates,
             lastCompletedDate: nextLastCompletedDate
           };
@@ -366,18 +387,19 @@ export default function App() {
         return t;
       });
 
-      if (subjMutated) {
+      const completedChapters = topicsValidated.filter(t => t.completed || t.rev1 || t.rev2 || t.rev3).length;
+      if (subjMutated || s.completedChapters !== completedChapters) {
         return {
           ...s,
           topics: topicsValidated,
-          completedChapters: topicsValidated.filter(t => t.rev1).length
+          completedChapters
         };
       }
       return s;
     });
 
     if (mutated) {
-      console.log("🧹 [Syllabus Validation Check] Reverted phantom topics & synchronized completedDates!");
+      console.log("🧹 [Syllabus Validation Check] Synchronized timestamps and preserved user progress!");
       setSubjects(validated);
     }
   }, [subjects]);
@@ -430,15 +452,15 @@ export default function App() {
         if (s.id !== subjectId) return s;
         const updatedTopics = s.topics.map((t) => {
           if (t.id === topicId) {
-            const nextCompleted = !t.rev1;
+            const isCurrentlyDone = Boolean(t.completed || t.rev1);
+            const nextCompleted = !isCurrentlyDone;
             const nextCompletedAt = nextCompleted ? todayKey : undefined;
 
             const datesSet = new Set<string>();
             if (nextCompleted && nextCompletedAt) datesSet.add(nextCompletedAt);
-            if (t.rev1 && t.rev1At) datesSet.add(t.rev1At);
-            if (t.rev2 && t.rev2At) datesSet.add(t.rev2At);
-            if (t.rev3 && t.rev3At) datesSet.add(t.rev3At);
-            if (t.ldr && t.ldrAt) datesSet.add(t.ldrAt);
+            if (nextCompleted && t.rev2 && t.rev2At) datesSet.add(t.rev2At);
+            if (nextCompleted && t.rev3 && t.rev3At) datesSet.add(t.rev3At);
+            if (nextCompleted && t.ldr && t.ldrAt) datesSet.add(t.ldrAt);
 
             const completedDates = Array.from(datesSet).sort();
             const lastCompletedDate = completedDates.length > 0 ? completedDates[completedDates.length - 1] : undefined;
@@ -447,13 +469,15 @@ export default function App() {
               ...t,
               completed: nextCompleted,
               completedAt: nextCompletedAt,
+              rev1: nextCompleted,
+              rev1At: nextCompleted ? (t.rev1At || todayKey) : undefined,
               completedDates,
               lastCompletedDate
             };
           }
           return t;
         });
-        const completedChapters = updatedTopics.filter((t) => t.rev1).length;
+        const completedChapters = updatedTopics.filter((t) => t.completed || t.rev1 || t.rev2 || t.rev3).length;
         return {
           ...s,
           topics: updatedTopics,
@@ -482,6 +506,12 @@ export default function App() {
               [dateField]: nextDateVal
             };
 
+            const isDone = Boolean(updatedTopic.rev1 || updatedTopic.rev2 || updatedTopic.rev3 || updatedTopic.completed);
+            updatedTopic.completed = isDone;
+            if (isDone && !updatedTopic.completedAt) {
+              updatedTopic.completedAt = todayKey;
+            }
+
             const datesSet = new Set<string>();
             if (updatedTopic.completed && updatedTopic.completedAt) datesSet.add(updatedTopic.completedAt);
             if (updatedTopic.rev1 && updatedTopic.rev1At) datesSet.add(updatedTopic.rev1At);
@@ -500,9 +530,11 @@ export default function App() {
           }
           return t;
         });
+        const completedChapters = updatedTopics.filter((t) => t.completed || t.rev1 || t.rev2 || t.rev3).length;
         return {
           ...s,
-          topics: updatedTopics
+          topics: updatedTopics,
+          completedChapters
         };
       })
     );
@@ -659,8 +691,8 @@ export default function App() {
   };
 
   // Totals for metrics
-  const totalChapters = subjects.reduce((acc, s) => acc + s.topics.length, 0);
-  const completedCount = subjects.reduce((acc, s) => acc + s.topics.filter((t) => t.rev1).length, 0);
+  const totalChapters = subjects.reduce((acc, s) => acc + (s.topics?.length || s.totalChapters || 0), 0);
+  const completedCount = subjects.reduce((acc, s) => acc + (s.topics?.filter((t) => t.completed || t.rev1 || t.rev2 || t.rev3).length || 0), 0);
 
   return (
     <div className={`min-h-screen flex flex-col ${isStandalone ? 'pb-safe' : ''} ${isStrictMode ? 'strict-theme bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-red-950/30 to-slate-950' : 'bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-slate-950'} text-slate-100 font-sans selection:bg-mentor-500 selection:text-white transition-colors duration-700`}>
@@ -673,6 +705,7 @@ export default function App() {
         </div>
       )}
       <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-white/5 blur-[140px] rounded-full" />
+      <GlobalTimerOverlay />
       {/* Top Header */}
       <Header
         activeTab={activeTab}
@@ -737,7 +770,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'timer' && (
+        <div className={activeTab === 'timer' ? 'block' : 'hidden'}>
           <StudyTimer
             subjects={subjects}
             timetable={timetable}
@@ -749,7 +782,7 @@ export default function App() {
             isStrictMode={isStrictMode}
             onNavigateTab={(tab) => setActiveTab(tab as any)}
           />
-        )}
+        </div>
 
         {activeTab === 'subjects' && (
           <SubjectTracker

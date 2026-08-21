@@ -6,7 +6,7 @@ import {
   BookOpen, Layers, Award, AlertCircle, Download, Edit3, MessageSquare,
   ShieldCheck, ArrowUpRight, BarChart2
 } from 'lucide-react';
-import { getISTYMD, formatDisplayDate } from '../lib/dateUtils';
+import { getISTYMD, formatDisplayDate, addDaysToYMD } from '../lib/dateUtils';
 import { parseSlotHours } from '../utils/timeUtils';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
 import { StudyHistoryLog } from '../types';
@@ -71,19 +71,13 @@ export const StudyHistoryHub: React.FC = () => {
     if (dateRangePreset === 'TODAY') {
       logs = logs.filter(l => l.dateStr === todayStr);
     } else if (dateRangePreset === 'YESTERDAY') {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yStr = yesterday.toISOString().split('T')[0];
+      const yStr = addDaysToYMD(todayStr, -1);
       logs = logs.filter(l => l.dateStr === yStr);
     } else if (dateRangePreset === 'WEEK') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      const limitStr = sevenDaysAgo.toISOString().split('T')[0];
+      const limitStr = addDaysToYMD(todayStr, -7);
       logs = logs.filter(l => l.dateStr >= limitStr);
     } else if (dateRangePreset === 'MONTH') {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      const limitStr = thirtyDaysAgo.toISOString().split('T')[0];
+      const limitStr = addDaysToYMD(todayStr, -30);
       logs = logs.filter(l => l.dateStr >= limitStr);
     }
 
@@ -211,14 +205,12 @@ export const StudyHistoryHub: React.FC = () => {
 
   // Calculate Heatmap Data (Last 84 Days / 12 Weeks)
   const heatmapData = useMemo(() => {
-    const today = new Date();
+    const todayYmd = getISTYMD();
     const map: { dateStr: string; hours: number }[] = [];
     
     // Create an array of the last 84 days
     for (let i = 83; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = addDaysToYMD(todayYmd, -i);
       
       // Calculate hours for this day
       const dayLogs = studyHistoryLogs?.filter(l => l.dateStr === dateStr) || [];

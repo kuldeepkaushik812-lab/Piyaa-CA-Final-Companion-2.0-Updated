@@ -241,6 +241,7 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
   const [waterCount, setWaterCount] = useState(0);
 
   const wakeLockRef = useRef<any>(null);
+  const isEndingSessionRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -527,6 +528,9 @@ export const StudyTimer: React.FC<StudyTimerProps> = ({
   }, [progressPct, mode]);
 
   const handleSessionEnd = () => {
+    if (isEndingSessionRef.current) return;
+    isEndingSessionRef.current = true;
+    setTimeout(() => { isEndingSessionRef.current = false; }, 2000);
     setIsRunning(false);
     setEndTime(null);
     setPauseStartTime(null);
