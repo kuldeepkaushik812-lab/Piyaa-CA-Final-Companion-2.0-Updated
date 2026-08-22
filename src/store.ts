@@ -457,7 +457,8 @@ export const useStore = create<GlobalState>()(
               
               let counted = 0;
               if (slot.status === 'COMPLETED' || slot.completed) {
-                counted = totalSlotHours;
+                // If they explicitly tracked some time, use it. Otherwise fallback to the full slot hours
+                counted = studied > 0 ? studied : totalSlotHours;
               } else if (slot.status === 'PARTIALLY_COMPLETED' || slot.status === 'IN_PROGRESS') {
                 counted = studied;
               } else if (slot.status === 'FAILED') {
@@ -478,10 +479,15 @@ export const useStore = create<GlobalState>()(
 
           // 4. Aggregate hours from studyHistoryLogs for this date
           const historyLogsForDate = (state.studyHistoryLogs || []).filter(l => l.dateStr === dateStr);
-          const historyHoursBySubject: Record<string, number> = {};
+          
+          const unlinkedHistoryHoursBySubject: Record<string, number> = {};
+          
           historyLogsForDate.forEach(log => {
             if (log.subjectId && log.durationHours > 0) {
-              historyHoursBySubject[log.subjectId] = (historyHoursBySubject[log.subjectId] || 0) + log.durationHours;
+              const isLinkedToSlot = log.sourceType === 'TIME_TABLE' || (log.chapterId && log.chapterId.startsWith('slot-'));
+              if (!isLinkedToSlot) {
+                unlinkedHistoryHoursBySubject[log.subjectId] = (unlinkedHistoryHoursBySubject[log.subjectId] || 0) + log.durationHours;
+              }
             }
           });
 
@@ -490,15 +496,15 @@ export const useStore = create<GlobalState>()(
           
           const allSubjectIds = new Set([
             ...Object.keys(slotHoursBySubject),
-            ...Object.keys(historyHoursBySubject)
+            ...Object.keys(unlinkedHistoryHoursBySubject)
           ]);
 
           const finalLogsForThisDate: typeof state.studyLogs = [];
 
           allSubjectIds.forEach((subjId) => {
             const slotHrs = slotHoursBySubject[subjId] || 0;
-            const histHrs = historyHoursBySubject[subjId] || 0;
-            const verifiedHrs = Math.max(slotHrs, histHrs);
+            const unlinkedHrs = unlinkedHistoryHoursBySubject[subjId] || 0;
+            const verifiedHrs = slotHrs + unlinkedHrs;
             if (verifiedHrs > 0) {
               finalLogsForThisDate.push({
                 id: `log-${dateStr}-${subjId}`,

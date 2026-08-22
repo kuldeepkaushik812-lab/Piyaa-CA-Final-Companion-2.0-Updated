@@ -895,9 +895,9 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
             let hoursToLog = 0;
             let finalStudied = currentStudied;
             
-            // If they didn't study using the timer, assume they completed the whole slot offline
-            if (currentStudied === 0) {
-              hoursToLog = slotHrs;
+            // If they didn't study the full time using the timer, assume they completed the rest offline
+            if (currentStudied < slotHrs) {
+              hoursToLog = slotHrs - currentStudied;
               finalStudied = slotHrs;
             }
 
@@ -1139,8 +1139,8 @@ export const TimetablePlanner: React.FC<TimetablePlannerProps> = ({
       let hoursToLog = 0;
       let finalStudied = currentStudied;
       
-      if (currentStudied === 0) {
-        hoursToLog = slotHrs;
+      if (currentStudied < slotHrs) {
+        hoursToLog = slotHrs - currentStudied;
         finalStudied = slotHrs;
       }
       
